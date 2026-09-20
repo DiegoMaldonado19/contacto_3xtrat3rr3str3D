@@ -1,0 +1,55 @@
+package com.dmaldonado.contacto_3xtrat3rr3str3d.model.errors;
+
+/**
+ * One reported error, with the line:column the statement requires.
+ * Immutable: an error is a fact about a compilation that already happened.
+ */
+public class CompilerError
+{
+    private final ErrorType type;
+    private final String    description;
+    private final String    lexeme;
+    private final int       line;
+    private final int       column;
+
+    public CompilerError(ErrorType type, String description, String lexeme, int line, int column)
+    {
+        this.type        = type;
+        this.description = description;
+        this.lexeme      = lexeme == null ? "" : lexeme;
+        this.line        = line;
+        this.column      = column;
+    }
+
+    public ErrorType getType()
+    {
+        return type;
+    }
+
+    public String getDescription()
+    {
+        return description;
+    }
+
+    public String getLexeme()
+    {
+        return lexeme;
+    }
+
+    public int getLine()
+    {
+        return line;
+    }
+
+    public int getColumn()
+    {
+        return column;
+    }
+
+    @Override
+    public String toString()
+    {
+        return "[" + type + "] linea " + line + ", columna " + column + ": " + description
+                + (lexeme.isEmpty() ? "" : "  ('" + lexeme + "')");
+    }
+}
