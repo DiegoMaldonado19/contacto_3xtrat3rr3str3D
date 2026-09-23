@@ -42,6 +42,12 @@ public class FileController
         return currentPath == null ? "Sin archivo" : currentPath.getFileName().toString();
     }
 
+    /** Null for a file that was never saved: the compiler needs it to resolve imports. */
+    public Path getCurrentPath()
+    {
+        return currentPath;
+    }
+
     /** @return the content of the opened file, or null when it was cancelled. */
     public String open()
     {

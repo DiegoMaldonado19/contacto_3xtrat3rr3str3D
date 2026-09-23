@@ -41,6 +41,6 @@ public class ArraySymbol extends Symbol
     @Override
     public String getDetail()
     {
-        return "tamano = " + (size < 0 ? "?" : size) + ", valores = " + valueCount;
+        return "tamano = " + (size < 0 ? "?" : size) + ", valores = " + valueCount + describeStorage();
     }
 }

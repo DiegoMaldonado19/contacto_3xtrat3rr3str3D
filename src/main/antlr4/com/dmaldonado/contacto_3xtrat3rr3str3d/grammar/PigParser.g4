@@ -6,14 +6,20 @@ options { tokenVocab = PigLexer; }
  * 1. ESTRUCTURA GLOBAL DEL PROGRAMA
  * ===================================================================== */
 programa
-    : seccionVariables? seccionFunciones? seccionPrincipal
+    : seccionImportaciones? seccionVariables? seccionFunciones? seccionPrincipal
       FIN_PROGRAMA PUNTO_COMA EOF
     ;
+
+// import carpeta.Objeto1.z  -- el ultimo ID es la extension del archivo
+seccionImportaciones : importacion+ ;
+importacion          : IMPORT ID ( PUNTO ID )+ PUNTO_COMA? ;
 
 seccionVariables : VARIABILES declaracionGlobal* ;
 seccionFunciones : MUNERA declaracionFuncion* ;
 seccionPrincipal : MAIOR instruccion* ;
 
+// declaracionEstructura sigue aqui aunque el enunciado la prohibe en .pig: el
+// semantico la rechaza con un mensaje legible en vez de un error sintactico crudo.
 declaracionGlobal
     : declaracionVariable
     | declaracionArreglo
@@ -26,6 +32,7 @@ declaracionGlobal
 
 declaracionVariable
     : ESTO ID DOS_PUNTOS tipo ASIGNACION? literalCompuesto PUNTO_COMA?  # declaracionVariableEstructura
+    | ESTO ID DOS_PUNTOS nuevoObjeto PUNTO_COMA                         # declaracionVariableObjeto
     | ESTO ID DOS_PUNTOS tipo ( ASIGNACION? expresion )? PUNTO_COMA     # declaracionVariableSimple
     ;
 
@@ -101,7 +108,7 @@ instruccion
     | instruccionEntrada
     | asignacion
     | instruccionIncremento
-    | instruccionLlamada
+    | instruccionExpresion   // ultima: "x++;" tambien es expresion, y gana instruccionIncremento
     ;
 
 asignacion
@@ -118,7 +125,9 @@ sufijoDestino
 
 instruccionIncremento : destino ( INCREMENTO | DECREMENTO ) PUNTO_COMA ;
 
-instruccionLlamada : llamadaFuncion PUNTO_COMA ;
+// Cualquier expresion, para que un "pergue;" llegue al semantico en vez de
+// abortar como error sintactico: el semantico decide que puede ir suelto.
+instruccionExpresion : expresion PUNTO_COMA ;
 
 instruccionSi
     : SI PAR_IZQ expresion PAR_DER bloque
@@ -179,10 +188,11 @@ expresionUnaria
 expresionSufijo : expresionPrimaria sufijoExpresion* ;
 
 sufijoExpresion
-    : COR_IZQ expresion COR_DER   # sufijoIndice
-    | PUNTO ID                    # sufijoAtributo
-    | INCREMENTO                  # sufijoIncremento
-    | DECREMENTO                  # sufijoDecremento
+    : COR_IZQ expresion COR_DER                    # sufijoIndice
+    | PUNTO ID PAR_IZQ listaExpresiones? PAR_DER   # sufijoMetodo
+    | PUNTO ID                                     # sufijoAtributo
+    | INCREMENTO                                   # sufijoIncremento
+    | DECREMENTO                                   # sufijoDecremento
     ;
 
 expresionPrimaria
@@ -193,6 +203,7 @@ expresionPrimaria
     | VERUM                        # primariaVerdadero
     | FALSUS                       # primariaFalso
     | llamadaFuncion               # primariaLlamada
+    | nuevoObjeto                  # primariaNovus
     | ID                           # primariaIdentificador
     | PAR_IZQ expresion PAR_DER    # primariaAgrupacion
     | literalCompuesto             # primariaLiteral
@@ -206,4 +217,5 @@ literalCompuesto
 campoLiteral : ID DOS_PUNTOS expresion ;
 
 llamadaFuncion   : ID PAR_IZQ listaExpresiones? PAR_DER ;
+nuevoObjeto      : NOVUS ID PAR_IZQ listaExpresiones? PAR_DER ;   // clase de un archivo .z
 listaExpresiones : expresion ( COMA expresion )* ;

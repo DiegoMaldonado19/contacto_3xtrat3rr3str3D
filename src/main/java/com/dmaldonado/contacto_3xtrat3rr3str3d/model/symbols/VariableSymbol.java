@@ -38,6 +38,6 @@ public class VariableSymbol extends Symbol {
     @Override
     public String getDetail() {
         String detail = initialized ? "inicializada" : "sin valor inicial";
-        return array ? "arreglo, " + detail : detail;
+        return (array ? "arreglo, " + detail : detail) + describeStorage();
     }
 }

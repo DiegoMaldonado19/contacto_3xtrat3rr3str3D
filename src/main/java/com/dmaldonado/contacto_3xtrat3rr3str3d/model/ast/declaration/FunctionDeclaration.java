@@ -3,6 +3,7 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstNode;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstVisitor;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.Block;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.FunctionSymbol;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.types.DataType;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,6 +25,9 @@ public class FunctionDeclaration extends AstNode
     private final List<AstNode>   localVariables;
     private final Block           body;
     private final boolean         returnsValue;
+
+    /** Set by the semantic analyzer: null when the signature was rejected as a duplicate. */
+    private FunctionSymbol symbol;
 
     public FunctionDeclaration(String name, String returnTypeText, List<Parameter> parameters,
                                List<AstNode> localVariables, Block body, boolean returnsValue,
@@ -73,6 +77,16 @@ public class FunctionDeclaration extends AstNode
     public boolean returnsValue()
     {
         return returnsValue;
+    }
+
+    public FunctionSymbol getSymbol()
+    {
+        return symbol;
+    }
+
+    public void setSymbol(FunctionSymbol symbol)
+    {
+        this.symbol = symbol;
     }
 
     @Override

@@ -1,6 +1,7 @@
 package com.dmaldonado.contacto_3xtrat3rr3str3d.model.errors;
 
 import org.antlr.v4.runtime.BaseErrorListener;
+import org.antlr.v4.runtime.Parser;
 import org.antlr.v4.runtime.RecognitionException;
 import org.antlr.v4.runtime.Recognizer;
 import org.antlr.v4.runtime.Token;
@@ -10,7 +11,7 @@ import org.antlr.v4.runtime.Token;
  * System.err, cada error de sintaxis va al ErrorManager en espanol y con la
  * columna 1-based.
  *
- * No existe su equivalente lexico: ver CompilerPipeline.reportInvalidCharacters.
+ * No existe su equivalente lexico: ver CompilerPipeline.reportLexicalErrors.
  */
 public class SyntaxErrorListener extends BaseErrorListener
 {
@@ -29,7 +30,34 @@ public class SyntaxErrorListener extends BaseErrorListener
         String lexeme = (offendingSymbol instanceof Token token)
                 ? token.getText() : String.valueOf(offendingSymbol);
 
+        Token previous = missingAfter(recognizer, offendingSymbol, message);
+
+        if (previous != null)
+        {
+            // Lo que falta pertenece a la linea donde termino lo anterior, no a
+            // la siguiente instruccion: un "finis;" olvidado se senala en su "}".
+            line               = previous.getLine();
+            charPositionInLine = previous.getCharPositionInLine() + previous.getText().length();
+        }
         errorManager.addSyntactic(translate(message), lexeme, line, charPositionInLine + 1);
+    }
+
+    /**
+     * The token after which something is missing, when the parser only found
+     * out on a later line; null otherwise. Only ANTLR's "missing" and
+     * "mismatched" messages mean that: an "extraneous" token IS the error.
+     */
+    private Token missingAfter(Recognizer<?, ?> recognizer, Object offendingSymbol, String message)
+    {
+        if (message == null || !(message.startsWith("missing") || message.startsWith("mismatched"))
+                || !(recognizer instanceof Parser parser) || !(offendingSymbol instanceof Token offending))
+        {
+            return null;
+        }
+
+        Token previous = parser.getInputStream().LT(-1);
+
+        return (previous != null && previous.getLine() < offending.getLine()) ? previous : null;
     }
 
     /** ANTLR only speaks English; the interface has to read in Spanish. */
@@ -43,7 +71,7 @@ public class SyntaxErrorListener extends BaseErrorListener
                 .replace("mismatched input", "no se esperaba")
                 .replace("no viable alternative at input", "construccion invalida en")
                 .replace("extraneous input", "sobra el token")
-                .replace("expecting", "se esperaba")
+                .replace(" expecting", ", se esperaba")
                 .replace("missing", "falta")
                 .replace("alternative", "alternativa")
                 // ANTLR appends "at '<token>'"; only that exact shape is

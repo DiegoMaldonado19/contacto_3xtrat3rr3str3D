@@ -11,17 +11,27 @@ import java.util.Map;
  *
  *  - currentScope: la cadena viva, para el analizador (cerrar oculta locales);
  *  - allSymbols:   historial plano, para graficar cuando ya todo esta cerrado;
- *  - structs/functions: resolucion por nombre, lo que permite el uso adelantado.
+ *  - functions:    las sobrecargas por nombre, lo que permite el uso adelantado.
+ *
+ * Las funciones no viven en los ambitos: tienen su propio espacio de nombres,
+ * asi dos sobrecargas no chocan entre si ni con una structura homonima.
+ *
+ * Tambien reparte el stack: cada variable recibe su slot al declararse. Las
+ * globales cuentan desde stack[0]; dentro de un marco (una funcion o MAIOR)
+ * se cuenta desde 1, porque stack[P] guarda el valor de retorno.
  */
 public class SymbolTable
 {
-    private final Scope                       globalScope  = new Scope("global", null);
-    private Scope                             currentScope = globalScope;
-    private final List<Symbol>                allSymbols   = new ArrayList<>();
-    private final Map<String, StructSymbol>   structs      = new LinkedHashMap<>();
-    private final Map<String, FunctionSymbol> functions    = new LinkedHashMap<>();
+    private final Scope                             globalScope  = new Scope("global", null);
+    private Scope                                   currentScope = globalScope;
+    private final List<Symbol>                      allSymbols   = new ArrayList<>();
+    private final Map<String, List<FunctionSymbol>> functions    = new LinkedHashMap<>();
 
-    /* ----------------- Scopes ----------------- */
+    private int globalSize;
+    /** Next free slot of the frame being analyzed. Frames never nest, so one counter is enough. */
+    private int nextSlot;
+
+    /* ----------------- Scopes and frames ----------------- */
 
     public void openScope(String name)
     {
@@ -34,6 +44,20 @@ public class SymbolTable
         {
             currentScope = currentScope.getParent();
         }
+    }
+
+    /** A function body or MAIOR. Nested scopes inside it keep counting, so no slot is reused. */
+    public void openFrame(String name)
+    {
+        openScope(name);
+        nextSlot = 1;
+    }
+
+    /** @return the size of the frame just closed. */
+    public int closeFrame()
+    {
+        closeScope();
+        return nextSlot;
     }
 
     public String getCurrentScopeName()
@@ -52,16 +76,28 @@ public class SymbolTable
         {
             allSymbols.add(symbol);
 
-            if (symbol instanceof StructSymbol struct)
+            if (symbol instanceof VariableSymbol || symbol instanceof ArraySymbol)
             {
-                structs.put(struct.getName(), struct);
-            }
-            else if (symbol instanceof FunctionSymbol function)
-            {
-                functions.put(function.getName(), function);
+                boolean global = currentScope == globalScope;
+                symbol.setStorage(global ? globalSize++ : nextSlot++, global);
             }
         }
         return added;
+    }
+
+    /** @return false if an overload with the same parameter types already exists. */
+    public boolean declareFunction(FunctionSymbol function)
+    {
+        List<FunctionSymbol> overloads = functions.computeIfAbsent(function.getName(),
+                name -> new ArrayList<>());
+
+        if (overloads.stream().anyMatch(function::hasSameParameters))
+        {
+            return false;
+        }
+        overloads.add(function);
+        allSymbols.add(function);
+        return true;
     }
 
     public Symbol lookup(String name)
@@ -74,14 +110,23 @@ public class SymbolTable
         return currentScope.lookupLocal(name);
     }
 
+    /** Walks the scope chain, so a structura declared inside a function stays inside it. */
     public StructSymbol lookupStruct(String name)
     {
-        return structs.get(name);
+        for (Scope scope = currentScope; scope != null; scope = scope.getParent())
+        {
+            if (scope.lookupLocal(name) instanceof StructSymbol struct)
+            {
+                return struct;
+            }
+        }
+        return null;
     }
 
-    public FunctionSymbol lookupFunction(String name)
+    /** Every overload with that name; empty when there is none. */
+    public List<FunctionSymbol> lookupFunctions(String name)
     {
-        return functions.get(name);
+        return functions.getOrDefault(name, List.of());
     }
 
     /* ----------------- Reports ----------------- */
@@ -91,4 +136,9 @@ public class SymbolTable
         return allSymbols;
     }
 
+    /** Slots taken by the globals: MAIOR's frame starts right after them. */
+    public int getGlobalSize()
+    {
+        return globalSize;
+    }
 }

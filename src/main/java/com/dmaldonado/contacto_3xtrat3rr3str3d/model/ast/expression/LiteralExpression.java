@@ -7,7 +7,7 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.model.types.DataType;
 import java.util.List;
 
 /**
- * 10, 9.81, "texto", 'a', verum, falsus.
+ * 10, 9.81, "texto", 'a', verum, falsus  (and verdadero, falso in Y?).
  *
  * The type comes straight from the grammar alternative that matched, so the
  * semantic analyzer never has to guess it back from the text.
@@ -33,6 +33,12 @@ public class LiteralExpression extends Expression
     public DataType getType()
     {
         return type;
+    }
+
+    /** The boolean true of any of the languages. */
+    public boolean isTrue()
+    {
+        return type == DataType.BOOLEANO && ("verum".equals(text) || "verdadero".equals(text));
     }
 
     @Override

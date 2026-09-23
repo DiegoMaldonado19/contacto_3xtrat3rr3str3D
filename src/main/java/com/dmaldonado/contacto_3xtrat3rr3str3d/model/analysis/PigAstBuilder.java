@@ -1,31 +1,39 @@
 package com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis;
 
+import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.column;
+import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.fold;
+import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.line;
+import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.missing;
+
 import com.dmaldonado.contacto_3xtrat3rr3str3d.grammar.PigParser;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.grammar.PigParserBaseVisitor;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstNode;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Expression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Language;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.ArrayDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.FunctionDeclaration;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.ImportDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.Parameter;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.Program;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.StructDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.StructField;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.VariableDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.ArrayAccessExpression;
-import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.BinaryExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.CompositeLiteralExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.FunctionCallExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.IdentifierExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.IncrementExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.LiteralExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.MemberAccessExpression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.MethodCallExpression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.NewExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.UnaryExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.Assignment;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.Block;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.BreakStatement;
-import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.CallStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.ContinueStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.DoWhileStatement;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.ExpressionStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.ForStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.IfStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.IncrementStatement;
@@ -37,20 +45,22 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.model.types.DataType;
 import java.util.ArrayList;
 import java.util.List;
 import org.antlr.v4.runtime.ParserRuleContext;
-import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.ParseTree;
+import org.antlr.v4.runtime.tree.TerminalNode;
 
 /**
- * Construye el AST propio a partir del parse tree, con el visitor que genera
- * ANTLR: visitXxx(ctx) devuelve el nodo de esa regla, y el valor de retorno es
- * el unico canal entre una regla y su padre.
+ * Construye el AST propio a partir del parse tree de PigLatin, con el visitor
+ * que genera ANTLR: visitXxx(ctx) devuelve el nodo de esa regla, y el valor de
+ * retorno es el unico canal entre una regla y su padre.
  *
  * Las reglas puente (un solo hijo) no se sobrescriben: visitChildren() heredado
  * ya devuelve el resultado del hijo.
  *
- * Recorrido completo: docs/05-Manual-Tecnico.md (6)
+ * El arbol puede venir reparado por la recuperacion de errores de ANTLR: cada
+ * visitX devuelve null si le falta algo que usa, y el padre lo omite. Asi un
+ * error de sintaxis borra su instruccion, no el analisis semantico entero.
  */
-public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
+public class PigAstBuilder extends PigParserBaseVisitor<AstNode>
 {
     /** Entry point: walks the parse tree and returns the root of the AST. */
     public Program build(PigParser.ProgramaContext parseTree)
@@ -64,10 +74,21 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
     @Override
     public AstNode visitPrograma(PigParser.ProgramaContext ctx)
     {
+        List<ImportDeclaration> imports   = new ArrayList<>();
         List<AstNode> globals             = new ArrayList<>();
         List<FunctionDeclaration> methods = new ArrayList<>();
         List<AstNode> mainStatements      = new ArrayList<>();
 
+        if (ctx.seccionImportaciones() != null)
+        {
+            for (PigParser.ImportacionContext importation : ctx.seccionImportaciones().importacion())
+            {
+                if (visit(importation) instanceof ImportDeclaration declaration)
+                {
+                    imports.add(declaration);
+                }
+            }
+        }
         if (ctx.seccionVariables() != null)
         {
             for (PigParser.DeclaracionGlobalContext global : ctx.seccionVariables().declaracionGlobal())
@@ -92,7 +113,24 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
                 add(mainStatements, visit(statement));
             }
         }
-        return new Program(globals, methods, mainStatements, line(ctx), column(ctx));
+        return new Program(Language.PIG, imports, globals, methods, mainStatements,
+                line(ctx), column(ctx));
+    }
+
+    @Override
+    public AstNode visitImportacion(PigParser.ImportacionContext ctx)
+    {
+        List<String> segments = new ArrayList<>();
+
+        for (TerminalNode segment : ctx.ID())
+        {
+            if (missing(segment))
+            {
+                return null;
+            }
+            segments.add(segment.getText());
+        }
+        return segments.size() < 2 ? null : new ImportDeclaration(segments, line(ctx), column(ctx));
     }
 
     /* =================================================================
@@ -103,6 +141,10 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
     {
         Expression value = expression(ctx.expresion());
 
+        if (missing(ctx.ID(), ctx.tipo()) || broken(ctx.expresion(), value))
+        {
+            return null;
+        }
         if (value == null)
         {
             value = implicitBooleanValue(ctx.tipo());
@@ -114,8 +156,26 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
     @Override
     public AstNode visitDeclaracionVariableEstructura(PigParser.DeclaracionVariableEstructuraContext ctx)
     {
-        return new VariableDeclaration(ctx.ID().getText(), ctx.tipo().getText(),
-                expression(ctx.literalCompuesto()), line(ctx), column(ctx));
+        Expression value = expression(ctx.literalCompuesto());
+
+        if (missing(ctx.ID(), ctx.tipo()) || value == null)
+        {
+            return null;
+        }
+        return new VariableDeclaration(ctx.ID().getText(), ctx.tipo().getText(), value,
+                line(ctx), column(ctx));
+    }
+
+    /** "esto o : novus Persona(12);": the class named after novus is also the type. */
+    @Override
+    public AstNode visitDeclaracionVariableObjeto(PigParser.DeclaracionVariableObjetoContext ctx)
+    {
+        if (missing(ctx.ID()) || !(expression(ctx.nuevoObjeto()) instanceof NewExpression object))
+        {
+            return null;
+        }
+        return new VariableDeclaration(ctx.ID().getText(), object.getClassName(), object,
+                line(ctx), column(ctx));
     }
 
     /** "esto activo : verum;": el tipo es tambien el valor, se materializa aqui. */
@@ -133,10 +193,15 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
     @Override
     public AstNode visitDeclaracionArreglo(PigParser.DeclaracionArregloContext ctx)
     {
+        Expression       size   = expression(ctx.expresion());
         List<Expression> values = expressionList(ctx.listaExpresiones());
 
-        return new ArrayDeclaration(ctx.ID().getText(), expression(ctx.expresion()),
-                arrayTypeText(ctx, values), values, line(ctx), column(ctx));
+        if (missing(ctx.ID()) || size == null || values == null)
+        {
+            return null;
+        }
+        return new ArrayDeclaration(ctx.ID().getText(), size, arrayTypeText(ctx, values), values,
+                line(ctx), column(ctx));
     }
 
     /** Sin tipo explicito se deduce del primer valor; sin valores, lo reporta la semantica. */
@@ -156,20 +221,33 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
     @Override
     public AstNode visitCampoSimple(PigParser.CampoSimpleContext ctx)
     {
-        return new StructField(ctx.ID().getText(), ctx.tipo().getText(), false,
+        if (missing(ctx.ID(), ctx.tipo()))
+        {
+            return null;
+        }
+        return new StructField(ctx.ID().getText(), ctx.tipo().getText(), false, -1,
                 line(ctx), column(ctx));
     }
 
     @Override
     public AstNode visitCampoArreglo(PigParser.CampoArregloContext ctx)
     {
-        return new StructField(ctx.ID().getText(), ctx.tipo().getText(), true,
+        if (missing(ctx.ID(), ctx.tipo()))
+        {
+            return null;
+        }
+        return new StructField(ctx.ID().getText(), ctx.tipo().getText(), true, -1,
                 line(ctx), column(ctx));
     }
 
     @Override
     public AstNode visitDeclaracionEstructura(PigParser.DeclaracionEstructuraContext ctx)
     {
+        if (missing(ctx.ID()))
+        {
+            return null;
+        }
+
         List<StructField> fields = new ArrayList<>();
 
         for (PigParser.AtributoEstructuraContext attribute : ctx.atributoEstructura())
@@ -185,7 +263,11 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
     @Override
     public AstNode visitParametro(PigParser.ParametroContext ctx)
     {
-        return new Parameter(ctx.ID().getText(), ctx.tipo().getText(), line(ctx), column(ctx));
+        if (missing(ctx.ID(), ctx.tipo()))
+        {
+            return null;
+        }
+        return new Parameter(ctx.ID().getText(), ctx.tipo().getText(), false, line(ctx), column(ctx));
     }
 
     /* =================================================================
@@ -194,17 +276,29 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
     @Override
     public AstNode visitFuncionSinRetorno(PigParser.FuncionSinRetornoContext ctx)
     {
+        Block body = block(ctx.cuerpoFuncion());
+
+        if (missing(ctx.ID()) || body == null)
+        {
+            return null;
+        }
         return new FunctionDeclaration(ctx.ID().getText(), "void",
                 parameters(ctx.listaParametros()), localVariables(ctx.cuerpoFuncion()),
-                block(ctx.cuerpoFuncion()), false, line(ctx), column(ctx));
+                body, false, line(ctx), column(ctx));
     }
 
     @Override
     public AstNode visitFuncionConRetorno(PigParser.FuncionConRetornoContext ctx)
     {
+        Block body = block(ctx.cuerpoFuncion());
+
+        if (missing(ctx.ID(), ctx.tipo()) || body == null)
+        {
+            return null;
+        }
         return new FunctionDeclaration(ctx.ID().getText(), ctx.tipo().getText(),
                 parameters(ctx.listaParametros()), localVariables(ctx.cuerpoFuncion()),
-                block(ctx.cuerpoFuncion()), true, line(ctx), column(ctx));
+                body, true, line(ctx), column(ctx));
     }
 
     /** El cuerpo guarda solo instrucciones; VARIABILES[ ] sale aparte en localVariables(). */
@@ -240,30 +334,38 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
     @Override
     public AstNode visitAsignacionSimple(PigParser.AsignacionSimpleContext ctx)
     {
-        return new Assignment(expression(ctx.destino()), expression(ctx.expresion()),
-                line(ctx), column(ctx));
+        return assignment(expression(ctx.destino()), expression(ctx.expresion()), ctx);
     }
 
     @Override
     public AstNode visitAsignacionEstructura(PigParser.AsignacionEstructuraContext ctx)
     {
-        return new Assignment(expression(ctx.destino()), expression(ctx.literalCompuesto()),
-                line(ctx), column(ctx));
+        return assignment(expression(ctx.destino()), expression(ctx.literalCompuesto()), ctx);
+    }
+
+    private AstNode assignment(Expression target, Expression value, ParserRuleContext ctx)
+    {
+        return (target == null || value == null) ? null
+                : new Assignment(target, value, line(ctx), column(ctx));
     }
 
     @Override
     public AstNode visitInstruccionIncremento(PigParser.InstruccionIncrementoContext ctx)
     {
-        return new IncrementStatement(expression(ctx.destino()),
-                ctx.INCREMENTO() != null ? "++" : "--", line(ctx), column(ctx));
+        Expression target = expression(ctx.destino());
+
+        return target == null ? null
+                : new IncrementStatement(target, ctx.INCREMENTO() != null ? "++" : "--",
+                        line(ctx), column(ctx));
     }
 
     @Override
-    public AstNode visitInstruccionLlamada(PigParser.InstruccionLlamadaContext ctx)
+    public AstNode visitInstruccionExpresion(PigParser.InstruccionExpresionContext ctx)
     {
-        return visit(ctx.llamadaFuncion()) instanceof FunctionCallExpression call
-                ? new CallStatement(call, line(ctx), column(ctx))
-                : null;
+        Expression expression = expression(ctx.expresion());
+
+        return expression == null ? null
+                : new ExpressionStatement(expression, line(ctx), column(ctx));
     }
 
     /** Pliega la cadena aliter de derecha a izquierda: si(a) A aliter(b) B => If(a,A,If(b,B)). */
@@ -273,58 +375,91 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
         // bloque(1) solo existe si un aliter sin condicion cierra la cadena.
         AstNode elseBranch = ctx.ALITER() != null ? block(ctx.bloque(1)) : null;
 
+        if (ctx.ALITER() != null && elseBranch == null)
+        {
+            return null;
+        }
+
         List<PigParser.AliterCondicionalContext> chain = ctx.aliterCondicional();
 
         for (int i = chain.size() - 1; i >= 0; i--)
         {
             PigParser.AliterCondicionalContext link = chain.get(i);
-            elseBranch = new IfStatement(expression(link.expresion()), block(link.bloque()),
-                    elseBranch, line(link), column(link));
+            Expression condition = expression(link.expresion());
+            Block      body      = block(link.bloque());
+
+            if (condition == null || body == null)
+            {
+                return null;
+            }
+            elseBranch = new IfStatement(condition, body, elseBranch, line(link), column(link));
         }
 
-        return new IfStatement(expression(ctx.expresion()), block(ctx.bloque(0)),
-                elseBranch, line(ctx), column(ctx));
+        Expression condition  = expression(ctx.expresion());
+        Block      thenBranch = block(ctx.bloque(0));
+
+        return (condition == null || thenBranch == null) ? null
+                : new IfStatement(condition, thenBranch, elseBranch, line(ctx), column(ctx));
     }
 
     @Override
     public AstNode visitInstruccionMientras(PigParser.InstruccionMientrasContext ctx)
     {
-        return new WhileStatement(expression(ctx.expresion()), block(ctx.bloque()),
-                line(ctx), column(ctx));
+        Expression condition = expression(ctx.expresion());
+        Block      body      = block(ctx.bloque());
+
+        return (condition == null || body == null) ? null
+                : new WhileStatement(condition, body, line(ctx), column(ctx));
     }
 
     @Override
     public AstNode visitInstruccionHacerMientras(PigParser.InstruccionHacerMientrasContext ctx)
     {
-        return new DoWhileStatement(block(ctx.bloque()), expression(ctx.expresion()),
-                line(ctx), column(ctx));
+        Block      body      = block(ctx.bloque());
+        Expression condition = expression(ctx.expresion());
+
+        return (condition == null || body == null) ? null
+                : new DoWhileStatement(body, condition, line(ctx), column(ctx));
     }
 
     @Override
     public AstNode visitActualizacionUnaria(PigParser.ActualizacionUnariaContext ctx)
     {
-        return new IncrementStatement(expression(ctx.destino()),
-                ctx.INCREMENTO() != null ? "++" : "--", line(ctx), column(ctx));
+        Expression target = expression(ctx.destino());
+
+        return target == null ? null
+                : new IncrementStatement(target, ctx.INCREMENTO() != null ? "++" : "--",
+                        line(ctx), column(ctx));
     }
 
     @Override
     public AstNode visitActualizacionAsignacion(PigParser.ActualizacionAsignacionContext ctx)
     {
-        return new Assignment(expression(ctx.destino()), expression(ctx.expresion()),
-                line(ctx), column(ctx));
+        return assignment(expression(ctx.destino()), expression(ctx.expresion()), ctx);
     }
 
     @Override
     public AstNode visitInstruccionPara(PigParser.InstruccionParaContext ctx)
     {
-        return new ForStatement(child(ctx.inicializacionPara()), expression(ctx.expresion()),
-                child(ctx.actualizacionPara()), block(ctx.bloque()), line(ctx), column(ctx));
+        AstNode    initialization = child(ctx.inicializacionPara());
+        Expression condition      = expression(ctx.expresion());
+        AstNode    update         = child(ctx.actualizacionPara());
+        Block      body           = block(ctx.bloque());
+
+        if (initialization == null || condition == null || update == null || body == null)
+        {
+            return null;
+        }
+        return new ForStatement(initialization, condition, update, body, line(ctx), column(ctx));
     }
 
     @Override
     public AstNode visitInstruccionRetorno(PigParser.InstruccionRetornoContext ctx)
     {
-        return new ReturnStatement(expression(ctx.expresion()), line(ctx), column(ctx));
+        Expression value = expression(ctx.expresion());
+
+        return broken(ctx.expresion(), value) ? null
+                : new ReturnStatement(value, line(ctx), column(ctx));
     }
 
     @Override
@@ -347,10 +482,12 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
         for (PigParser.ExpresionContext value : ctx.expresion())
         {
             Expression printed = expression(value);
-            if (printed != null)
+
+            if (printed == null)
             {
-                values.add(printed);
+                return null;
             }
+            values.add(printed);
         }
         return new PrintStatement(values, line(ctx), column(ctx));
     }
@@ -359,7 +496,10 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
     @Override
     public AstNode visitInstruccionEntrada(PigParser.InstruccionEntradaContext ctx)
     {
-        return new InputStatement(expression(ctx.destino()), line(ctx), column(ctx));
+        Expression target = expression(ctx.destino());
+
+        return broken(ctx.destino(), target) ? null
+                : new InputStatement(target, line(ctx), column(ctx));
     }
 
     /* =================================================================
@@ -368,18 +508,33 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
     @Override
     public AstNode visitDestino(PigParser.DestinoContext ctx)
     {
+        if (missing(ctx.ID()))
+        {
+            return null;
+        }
+
         Expression current = new IdentifierExpression(ctx.ID().getText(), line(ctx), column(ctx));
 
         for (PigParser.SufijoDestinoContext suffix : ctx.sufijoDestino())
         {
             if (suffix instanceof PigParser.AccesoIndiceContext index)
             {
-                current = new ArrayAccessExpression(current, expression(index.expresion()),
-                        line(index), column(index));
+                Expression position = expression(index.expresion());
+
+                if (position == null)
+                {
+                    return null;
+                }
+                current = new ArrayAccessExpression(current, position, line(index), column(index));
             }
             else
             {
                 PigParser.AccesoAtributoContext member = (PigParser.AccesoAtributoContext) suffix;
+
+                if (missing(member.ID()))
+                {
+                    return null;
+                }
                 current = new MemberAccessExpression(current, member.ID().getText(),
                         line(member), column(member));
             }
@@ -389,51 +544,41 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
 
     /* =================================================================
      * EXPRESSIONS
-     *
-     * The six precedence rules all share the shape  A : B (op B)* , so a
-     * single method folds them, LEFT associative:  a - b - c => ((a - b) - c)
      * ================================================================= */
-    @Override public AstNode visitExpresionOr(PigParser.ExpresionOrContext ctx)                         { return fold(ctx); }
-    @Override public AstNode visitExpresionAnd(PigParser.ExpresionAndContext ctx)                       { return fold(ctx); }
-    @Override public AstNode visitExpresionIgualdad(PigParser.ExpresionIgualdadContext ctx)             { return fold(ctx); }
-    @Override public AstNode visitExpresionRelacional(PigParser.ExpresionRelacionalContext ctx)         { return fold(ctx); }
-    @Override public AstNode visitExpresionAditiva(PigParser.ExpresionAditivaContext ctx)               { return fold(ctx); }
-    @Override public AstNode visitExpresionMultiplicativa(PigParser.ExpresionMultiplicativaContext ctx) { return fold(ctx); }
-
-    /** Con un solo operando el bucle no corre y el hijo pasa intacto. */
-    private AstNode fold(ParserRuleContext ctx)
-    {
-        Expression left = expression(ctx.getChild(0));
-
-        for (int i = 1; i + 1 < ctx.getChildCount(); i += 2)
-        {
-            String operator  = ctx.getChild(i).getText();
-            Expression right = expression(ctx.getChild(i + 1));
-            left = new BinaryExpression(left, operator, right, line(ctx), column(ctx));
-        }
-        return left;
-    }
+    @Override public AstNode visitExpresionOr(PigParser.ExpresionOrContext ctx)                         { return fold(ctx, this::expression); }
+    @Override public AstNode visitExpresionAnd(PigParser.ExpresionAndContext ctx)                       { return fold(ctx, this::expression); }
+    @Override public AstNode visitExpresionIgualdad(PigParser.ExpresionIgualdadContext ctx)             { return fold(ctx, this::expression); }
+    @Override public AstNode visitExpresionRelacional(PigParser.ExpresionRelacionalContext ctx)         { return fold(ctx, this::expression); }
+    @Override public AstNode visitExpresionAditiva(PigParser.ExpresionAditivaContext ctx)               { return fold(ctx, this::expression); }
+    @Override public AstNode visitExpresionMultiplicativa(PigParser.ExpresionMultiplicativaContext ctx) { return fold(ctx, this::expression); }
 
     @Override
     public AstNode visitUnariaNegacionLogica(PigParser.UnariaNegacionLogicaContext ctx)
     {
-        return new UnaryExpression("non", expression(ctx.expresionUnaria()), line(ctx), column(ctx));
+        Expression operand = expression(ctx.expresionUnaria());
+
+        return operand == null ? null : new UnaryExpression("non", operand, line(ctx), column(ctx));
     }
 
     @Override
     public AstNode visitUnariaNegativo(PigParser.UnariaNegativoContext ctx)
     {
-        return new UnaryExpression("-", expression(ctx.expresionUnaria()), line(ctx), column(ctx));
+        Expression operand = expression(ctx.expresionUnaria());
+
+        return operand == null ? null : new UnaryExpression("-", operand, line(ctx), column(ctx));
     }
 
     @Override
     public AstNode visitUnariaPrefija(PigParser.UnariaPrefijaContext ctx)
     {
-        return new IncrementExpression(expression(ctx.expresionUnaria()),
-                ctx.INCREMENTO() != null ? "++" : "--", true, line(ctx), column(ctx));
+        Expression operand = expression(ctx.expresionUnaria());
+
+        return operand == null ? null
+                : new IncrementExpression(operand, ctx.INCREMENTO() != null ? "++" : "--", true,
+                        line(ctx), column(ctx));
     }
 
-    /** Each suffix wraps the previous one, so arr[i].prop[j] chains correctly. */
+    /** Each suffix wraps the previous one, so arr[i].prop[j].metodo() chains correctly. */
     @Override
     public AstNode visitExpresionSufijo(PigParser.ExpresionSufijoContext ctx)
     {
@@ -441,15 +586,30 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
 
         for (PigParser.SufijoExpresionContext suffix : ctx.sufijoExpresion())
         {
+            if (current == null)
+            {
+                return null;
+            }
             if (suffix instanceof PigParser.SufijoIndiceContext index)
             {
-                current = new ArrayAccessExpression(current, expression(index.expresion()),
-                        line(index), column(index));
+                Expression position = expression(index.expresion());
+
+                current = position == null ? null
+                        : new ArrayAccessExpression(current, position, line(index), column(index));
+            }
+            else if (suffix instanceof PigParser.SufijoMetodoContext method)
+            {
+                List<Expression> arguments = expressionList(method.listaExpresiones());
+
+                current = (missing(method.ID()) || arguments == null) ? null
+                        : new MethodCallExpression(current, method.ID().getText(), arguments,
+                                line(method), column(method));
             }
             else if (suffix instanceof PigParser.SufijoAtributoContext member)
             {
-                current = new MemberAccessExpression(current, member.ID().getText(),
-                        line(member), column(member));
+                current = missing(member.ID()) ? null
+                        : new MemberAccessExpression(current, member.ID().getText(),
+                                line(member), column(member));
             }
             else
             {
@@ -508,7 +668,7 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
     @Override
     public AstNode visitPrimariaAgrupacion(PigParser.PrimariaAgrupacionContext ctx)
     {
-        return visit(ctx.expresion());
+        return child(ctx.expresion());
     }
 
     @Override
@@ -519,8 +679,14 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
 
         for (PigParser.CampoLiteralContext field : ctx.campoLiteral())
         {
+            Expression value = expression(field.expresion());
+
+            if (missing(field.ID()) || value == null)
+            {
+                return null;
+            }
             fieldNames.add(field.ID().getText());
-            values.add(expression(field.expresion()));
+            values.add(value);
         }
         return new CompositeLiteralExpression(fieldNames, values, line(ctx), column(ctx));
     }
@@ -528,15 +694,28 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
     @Override
     public AstNode visitLiteralPosicional(PigParser.LiteralPosicionalContext ctx)
     {
-        return new CompositeLiteralExpression(null, expressionList(ctx.listaExpresiones()),
-                line(ctx), column(ctx));
+        List<Expression> values = expressionList(ctx.listaExpresiones());
+
+        return values == null ? null
+                : new CompositeLiteralExpression(null, values, line(ctx), column(ctx));
     }
 
     @Override
     public AstNode visitLlamadaFuncion(PigParser.LlamadaFuncionContext ctx)
     {
-        return new FunctionCallExpression(ctx.ID().getText(),
-                expressionList(ctx.listaExpresiones()), line(ctx), column(ctx));
+        List<Expression> arguments = expressionList(ctx.listaExpresiones());
+
+        return (missing(ctx.ID()) || arguments == null) ? null
+                : new FunctionCallExpression(ctx.ID().getText(), arguments, line(ctx), column(ctx));
+    }
+
+    @Override
+    public AstNode visitNuevoObjeto(PigParser.NuevoObjetoContext ctx)
+    {
+        List<Expression> arguments = expressionList(ctx.listaExpresiones());
+
+        return (missing(ctx.ID()) || arguments == null) ? null
+                : new NewExpression(ctx.ID().getText(), arguments, line(ctx), column(ctx));
     }
 
     /* =================================================================
@@ -557,6 +736,12 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
         return child(ctx) instanceof Block block ? block : null;
     }
 
+    /** An optional part that was written but did not build: its statement is dropped. */
+    private static boolean broken(ParseTree written, AstNode built)
+    {
+        return written != null && built == null;
+    }
+
     private List<AstNode> statements(List<PigParser.InstruccionContext> contexts)
     {
         List<AstNode> statements = new ArrayList<>();
@@ -568,6 +753,7 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
         return statements;
     }
 
+    /** Null when an item did not build: dropping it silently would change the arity. */
     private List<Expression> expressionList(PigParser.ListaExpresionesContext ctx)
     {
         List<Expression> values = new ArrayList<>();
@@ -577,10 +763,12 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
             for (PigParser.ExpresionContext item : ctx.expresion())
             {
                 Expression value = expression(item);
-                if (value != null)
+
+                if (value == null)
                 {
-                    values.add(value);
+                    return null;
                 }
+                values.add(value);
             }
         }
         return values;
@@ -609,17 +797,5 @@ public class AstBuilderVisitor extends PigParserBaseVisitor<AstNode>
         {
             target.add(node);
         }
-    }
-
-    private int line(ParserRuleContext ctx)
-    {
-        Token token = ctx.getStart();
-        return token == null ? 0 : token.getLine();
-    }
-
-    private int column(ParserRuleContext ctx)
-    {
-        Token token = ctx.getStart();
-        return token == null ? 0 : token.getCharPositionInLine() + 1;
     }
 }

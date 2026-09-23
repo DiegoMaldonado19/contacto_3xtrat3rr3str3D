@@ -16,12 +16,14 @@ public final class TypeSystem
 
     public static DataType arithmeticResult(DataType left, DataType right, String operator)
     {
-        if (left == DataType.ERROR || right == DataType.ERROR)
+        // A whole structure or a void call is no value to operate with; textum
+        // + Persona would have nothing to turn Persona into.
+        if (!left.isPrimitive() || !right.isPrimitive())
         {
             return DataType.ERROR;
         }
 
-        // textum only takes part through '+' (concatenation), with any type.
+        // textum only takes part through '+' (concatenation), with any primitive.
         if (left == DataType.TEXTUM || right == DataType.TEXTUM)
         {
             return "+".equals(operator) ? DataType.TEXTUM : DataType.ERROR;
@@ -43,7 +45,7 @@ public final class TypeSystem
 
     public static DataType relationalResult(DataType left, DataType right, String operator)
     {
-        if (left == DataType.ERROR || right == DataType.ERROR)
+        if (!left.isPrimitive() || !right.isPrimitive())
         {
             return DataType.ERROR;
         }
@@ -51,7 +53,7 @@ public final class TypeSystem
         boolean isEquality = "==".equals(operator) || "!=".equals(operator);
 
         // == and != work between equal types, textum and bool included.
-        if (isEquality && left == right && left != DataType.ESTRUCTURA)
+        if (isEquality && left == right)
         {
             return DataType.BOOLEANO;
         }

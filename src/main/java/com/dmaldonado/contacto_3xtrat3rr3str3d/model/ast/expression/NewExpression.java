@@ -3,29 +3,25 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstNode;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstVisitor;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Expression;
-import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.FunctionSymbol;
 import java.util.ArrayList;
 import java.util.List;
 
-/** calcularPoder(10, 0.5) */
-public class FunctionCallExpression extends Expression
+/** novus Persona(12, "Profesor") -- an instance of a class defined in a .z file. */
+public class NewExpression extends Expression
 {
-    private final String           name;
+    private final String           className;
     private final List<Expression> arguments;
 
-    /** The overload the call resolved to. Set by the semantic analyzer. */
-    private FunctionSymbol function;
-
-    public FunctionCallExpression(String name, List<Expression> arguments, int line, int column)
+    public NewExpression(String className, List<Expression> arguments, int line, int column)
     {
         super(line, column);
-        this.name      = name;
+        this.className = className;
         this.arguments = arguments;
     }
 
-    public String getName()
+    public String getClassName()
     {
-        return name;
+        return className;
     }
 
     public List<Expression> getArguments()
@@ -33,26 +29,16 @@ public class FunctionCallExpression extends Expression
         return arguments;
     }
 
-    public FunctionSymbol getFunction()
-    {
-        return function;
-    }
-
-    public void setFunction(FunctionSymbol function)
-    {
-        this.function = function;
-    }
-
     @Override
     public <T> T accept(AstVisitor<T> visitor)
     {
-        return visitor.visitFunctionCallExpression(this);
+        return visitor.visitNewExpression(this);
     }
 
     @Override
     public String getLabel()
     {
-        return name + "()";
+        return "novus " + className + "()";
     }
 
     @Override

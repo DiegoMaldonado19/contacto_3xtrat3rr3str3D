@@ -2,23 +2,45 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration;
 
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstNode;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstVisitor;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Language;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Root of the AST: the three sections VARIABILES, MUNERA and MAIOR. */
+/**
+ * Root of the AST: imports, VARIABILES, MUNERA and MAIOR. A .y file only fills
+ * globals (its structures) and functions.
+ */
 public class Program extends AstNode
 {
+    private final Language                  language;
+    private final List<ImportDeclaration>   imports;
     private final List<AstNode>             globals;
     private final List<FunctionDeclaration> functions;
     private final List<AstNode>             mainStatements;
 
-    public Program(List<AstNode> globals, List<FunctionDeclaration> functions,
-                   List<AstNode> mainStatements, int line, int column)
+    /** Stack slots of the MAIOR frame. The semantic analyzer sets it; the generator reads it. */
+    private int frameSize;
+
+    public Program(Language language, List<ImportDeclaration> imports, List<AstNode> globals,
+                   List<FunctionDeclaration> functions, List<AstNode> mainStatements,
+                   int line, int column)
     {
         super(line, column);
+        this.language       = language;
+        this.imports        = imports;
         this.globals        = globals;
         this.functions      = functions;
         this.mainStatements = mainStatements;
+    }
+
+    public Language getLanguage()
+    {
+        return language;
+    }
+
+    public List<ImportDeclaration> getImports()
+    {
+        return imports;
     }
 
     public List<AstNode> getGlobals()
@@ -36,6 +58,16 @@ public class Program extends AstNode
         return mainStatements;
     }
 
+    public int getFrameSize()
+    {
+        return frameSize;
+    }
+
+    public void setFrameSize(int frameSize)
+    {
+        this.frameSize = frameSize;
+    }
+
     @Override
     public <T> T accept(AstVisitor<T> visitor)
     {
@@ -51,7 +83,8 @@ public class Program extends AstNode
     @Override
     public List<AstNode> getChildren()
     {
-        List<AstNode> children = new ArrayList<>(globals);
+        List<AstNode> children = new ArrayList<>(imports);
+        children.addAll(globals);
         children.addAll(functions);
         children.addAll(mainStatements);
         return children;

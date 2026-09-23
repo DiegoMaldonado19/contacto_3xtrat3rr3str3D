@@ -8,8 +8,9 @@ import java.util.List;
 /**
  * One attribute inside a structura.
  *
- * An array field carries no size here (series animales : Animal;) because the
- * dimension is only given when the variable is declared.
+ * A PigLatin array field carries no size (series animales : Animal;) because
+ * the dimension is only given when the variable is declared. A Y? array field
+ * does (entero miArray[10]), and the size is constant by the statement.
  */
 public class StructField extends AstNode
 {
@@ -17,14 +18,22 @@ public class StructField extends AstNode
     private final String   typeText;
     private final DataType type;
     private final boolean  array;
+    /** -1 when the field is not an array or its size is given later. */
+    private final int      size;
 
-    public StructField(String name, String typeText, boolean array, int line, int column)
+    public StructField(String name, String typeText, boolean array, int size, int line, int column)
     {
         super(line, column);
         this.name     = name;
         this.typeText = typeText;
         this.type     = DataType.fromText(typeText);
         this.array    = array;
+        this.size     = size;
+    }
+
+    public int getSize()
+    {
+        return size;
     }
 
     public String getName()

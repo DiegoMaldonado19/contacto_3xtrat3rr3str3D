@@ -67,7 +67,7 @@ public class ApplicationController
 
     private void compile()
     {
-        lastResult = compiler.compile(view.getCodeArea().getText());
+        lastResult = compiler.compile(view.getCodeArea().getText(), files.getCurrentPath());
 
         view.showErrors(lastResult.errors());
         view.showSymbols(lastResult.symbolTable().getAllSymbols());
@@ -75,15 +75,19 @@ public class ApplicationController
         // El enunciado prohibe graficar y generar codigo de un programa con
         // errores: se limpian ambos paneles en vez de dejar uno viejo en pantalla.
         view.showAst(lastResult.isValid() ? AstTreeBuilder.build(lastResult.ast()) : null);
-        view.showGeneratedC("");   // TODO fase 3: cuartetas -> C
-        view.getExportButton().setDisable(!lastResult.isValid());
+        view.showQuadruples(lastResult.quadruples());
+        view.showGeneratedC(lastResult.cCode());
+
+        // Un .y valido no trae C: no tiene MAIOR que ejecutar.
+        boolean translated = !lastResult.cCode().isEmpty();
+        view.getExportButton().setDisable(!translated);
 
         // La pila se muestra compile o no: el archivo invalido es justo aquel
         // cuyos pasos ERROR hay que leer.
         view.getProcessStackPanel().load(lastResult.steps());
 
         view.setStatus(summaryOf(lastResult), lastResult.isValid());
-        view.showResultTab(lastResult.isValid());
+        view.showResultTab(translated);
     }
 
     private static String summaryOf(CompilationResult result)
@@ -93,7 +97,7 @@ public class ApplicationController
         if (result.isValid())
         {
             return "Compilacion exitosa  |  " + result.symbolTable().getAllSymbols().size()
-                 + " simbolo(s)  |  " + steps;
+                 + " simbolo(s)  |  " + result.quadruples().size() + " cuarteta(s)  |  " + steps;
         }
         return "Compilacion con " + result.errors().size() + " error(es)  |  " + steps;
     }
@@ -102,6 +106,12 @@ public class ApplicationController
     {
         CodeArea codeArea = view.getCodeArea();
 
+        // Un error de un archivo importado no esta en este editor: se avisa donde esta.
+        if (!error.getSource().isEmpty() && !error.getSource().equals(files.getCurrentFileName()))
+        {
+            view.setStatus("El error esta en el archivo importado " + error.getSource());
+            return;
+        }
         if (codeArea.getParagraphs().isEmpty())
         {
             return;
@@ -154,7 +164,7 @@ public class ApplicationController
 
     private void exportGeneratedC()
     {
-        if (lastResult == null || !lastResult.isValid())
+        if (lastResult == null || lastResult.cCode().isEmpty())
         {
             return;
         }

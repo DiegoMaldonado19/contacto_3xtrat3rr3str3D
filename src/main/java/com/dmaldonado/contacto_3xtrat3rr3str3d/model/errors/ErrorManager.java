@@ -16,24 +16,32 @@ public class ErrorManager
 {
     private final List<CompilerError> errors = new ArrayList<>();
 
-    private void add(CompilerError error)
+    /** File the next errors belong to; the pipeline switches it for each import. */
+    private String source = "";
+
+    public void setSource(String source)
     {
-        errors.add(error);
+        this.source = source;
+    }
+
+    private void add(ErrorType type, String description, String lexeme, int line, int column)
+    {
+        errors.add(new CompilerError(type, description, lexeme, line, column, source));
     }
 
     public void addLexical(String description, String lexeme, int line, int column)
     {
-        add(new CompilerError(ErrorType.LEXICAL, description, lexeme, line, column));
+        add(ErrorType.LEXICAL, description, lexeme, line, column);
     }
 
     public void addSyntactic(String description, String lexeme, int line, int column)
     {
-        add(new CompilerError(ErrorType.SYNTACTIC, description, lexeme, line, column));
+        add(ErrorType.SYNTACTIC, description, lexeme, line, column);
     }
 
     public void addSemantic(String description, String lexeme, int line, int column)
     {
-        add(new CompilerError(ErrorType.SEMANTIC, description, lexeme, line, column));
+        add(ErrorType.SEMANTIC, description, lexeme, line, column);
     }
 
     public boolean hasErrorsOf(ErrorType type)
@@ -41,11 +49,12 @@ public class ErrorManager
         return errors.stream().anyMatch(error -> error.getType() == type);
     }
 
-    /** Sorted by position, which is the order the user reads the file in. */
+    /** Sorted by file and position, which is the order the user reads them in. */
     public List<CompilerError> getErrors()
     {
         List<CompilerError> sorted = new ArrayList<>(errors);
-        sorted.sort(Comparator.comparingInt(CompilerError::getLine)
+        sorted.sort(Comparator.comparing(CompilerError::getSource)
+                              .thenComparingInt(CompilerError::getLine)
                               .thenComparingInt(CompilerError::getColumn));
         return Collections.unmodifiableList(sorted);
     }

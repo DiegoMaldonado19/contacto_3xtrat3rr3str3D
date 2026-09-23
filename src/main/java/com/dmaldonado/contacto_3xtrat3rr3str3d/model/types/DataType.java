@@ -43,6 +43,12 @@ public enum DataType
         return rank;
     }
 
+    /** The five value types: textum, decimalis, numerus, littera and bool. */
+    public boolean isPrimitive()
+    {
+        return rank > 0;
+    }
+
     /** numerus, decimalis and littera are the ones arithmetic accepts. */
     public boolean isNumeric()
     {
@@ -50,9 +56,9 @@ public enum DataType
     }
 
     /**
-     * Maps the type written in the source to its DataType. "bool" is the
-     * explicit boolean type; "verum"/"falsus" are the older form the language
-     * still accepts as a type. Anything else is a user defined structure.
+     * Maps the type written in the source, in PigLatin or Y?, to its DataType.
+     * "bool" is the explicit boolean type; "verum"/"falsus" are the older form
+     * PigLatin still accepts as a type. Anything else is a user defined structure.
      */
     public static DataType fromText(String text)
     {
@@ -63,10 +69,10 @@ public enum DataType
 
         return switch (text)
         {
-            case "numerus"                   -> NUMERUS;
-            case "decimalis"                 -> DECIMALIS;
-            case "textum"                    -> TEXTUM;
-            case "littera"                   -> LITTERA;
+            case "numerus", "entero"         -> NUMERUS;
+            case "decimalis", "flotante"     -> DECIMALIS;
+            case "textum", "cadena"          -> TEXTUM;
+            case "littera", "caracter"       -> LITTERA;
             case "bool", "verum", "falsus"   -> BOOLEANO;
             default                          -> ESTRUCTURA;
         };

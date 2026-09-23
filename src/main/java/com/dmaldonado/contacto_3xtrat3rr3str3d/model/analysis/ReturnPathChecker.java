@@ -4,10 +4,12 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstNode;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.LiteralExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.Block;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.BreakStatement;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.CaseClause;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.ContinueStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.DoWhileStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.IfStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.ReturnStatement;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.SwitchStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.WhileStatement;
 import java.util.List;
 
@@ -62,13 +64,19 @@ public final class ReturnPathChecker
             return isAlwaysTrue(whileStatement.getCondition())
                 && alwaysReturns(whileStatement.getBody());
         }
+        if (node instanceof SwitchStatement switchStatement)
+        {
+            // Every case returning covers fallthrough too; without siempre a
+            // value may match no case at all.
+            return switchStatement.getCases().stream().anyMatch(CaseClause::isDefault)
+                && switchStatement.getCases().stream().allMatch(clause -> alwaysReturns(clause.getBody()));
+        }
         return false;
     }
 
     private static boolean isAlwaysTrue(AstNode condition)
     {
-        return condition instanceof LiteralExpression literal
-            && "verum".equals(literal.getText());
+        return condition instanceof LiteralExpression literal && literal.isTrue();
     }
 
     /**

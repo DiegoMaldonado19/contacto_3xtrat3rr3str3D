@@ -3,6 +3,7 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstNode;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstVisitor;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Expression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.Symbol;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.types.DataType;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,6 +15,9 @@ public class VariableDeclaration extends AstNode
     private final String     typeText;
     private final DataType   type;
     private final Expression initialValue;
+
+    /** The declared symbol, which knows its stack slot. Set by the semantic analyzer. */
+    private Symbol symbol;
 
     public VariableDeclaration(String name, String typeText, Expression initialValue,
                                int line, int column)
@@ -44,6 +48,16 @@ public class VariableDeclaration extends AstNode
     public Expression getInitialValue()
     {
         return initialValue;
+    }
+
+    public Symbol getSymbol()
+    {
+        return symbol;
+    }
+
+    public void setSymbol(Symbol symbol)
+    {
+        this.symbol = symbol;
     }
 
     @Override

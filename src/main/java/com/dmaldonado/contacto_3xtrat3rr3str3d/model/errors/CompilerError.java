@@ -1,7 +1,8 @@
 package com.dmaldonado.contacto_3xtrat3rr3str3d.model.errors;
 
 /**
- * One reported error, with the line:column the statement requires.
+ * One reported error, with the line:column the statement requires, and the
+ * file it belongs to: an import brings its own line numbers.
  * Immutable: an error is a fact about a compilation that already happened.
  */
 public class CompilerError
@@ -11,14 +12,17 @@ public class CompilerError
     private final String    lexeme;
     private final int       line;
     private final int       column;
+    private final String    source;
 
-    public CompilerError(ErrorType type, String description, String lexeme, int line, int column)
+    public CompilerError(ErrorType type, String description, String lexeme, int line, int column,
+                         String source)
     {
         this.type        = type;
         this.description = description;
         this.lexeme      = lexeme == null ? "" : lexeme;
         this.line        = line;
         this.column      = column;
+        this.source      = source == null ? "" : source;
     }
 
     public ErrorType getType()
@@ -46,10 +50,17 @@ public class CompilerError
         return column;
     }
 
+    /** File name; empty for a source that was never saved. */
+    public String getSource()
+    {
+        return source;
+    }
+
     @Override
     public String toString()
     {
-        return "[" + type + "] linea " + line + ", columna " + column + ": " + description
+        return "[" + type + "] " + (source.isEmpty() ? "" : source + " ") + "linea " + line
+                + ", columna " + column + ": " + description
                 + (lexeme.isEmpty() ? "" : "  ('" + lexeme + "')");
     }
 }

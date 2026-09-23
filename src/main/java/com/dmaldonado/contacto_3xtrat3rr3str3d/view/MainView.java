@@ -1,5 +1,6 @@
 package com.dmaldonado.contacto_3xtrat3rr3str3d.view;
 
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.codegen.Quadruple;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.errors.CompilerError;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.Symbol;
 import java.util.List;
@@ -12,6 +13,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.Separator;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tab;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
@@ -37,6 +39,7 @@ public class MainView extends BorderPane {
     private final TableView<Symbol> symbolTable = new TableView<>();
     private final TreeView<String> astTree = new TreeView<>();
     private final ProcessStackPanel stackPanel = new ProcessStackPanel();
+    private final TableView<Quadruple> quadrupleTable = new TableView<>();
     private final TextArea generatedC  = new TextArea();
     private final TabPane tabs = new TabPane();
 
@@ -57,6 +60,7 @@ public class MainView extends BorderPane {
     public MainView() {
         buildErrorTable();
         buildSymbolTable();
+        buildQuadrupleTable();
 
         generatedC.setEditable(false);
         generatedC.getStyleClass().add("code-output");
@@ -93,6 +97,7 @@ public class MainView extends BorderPane {
                 new Tab("AST", astTree),
                 new Tab("Tabla de simbolos", symbolTable),
                 new Tab("Pila de procesos", stackPanel),
+                new Tab("Cuartetas", quadrupleTable),
                 codeTab);
 
         SplitPane split = new SplitPane(editorScroll, tabs);
@@ -103,6 +108,7 @@ public class MainView extends BorderPane {
     private void buildErrorTable() {
         errorTable.setPlaceholder(new Label("Sin errores."));
         addColumn(errorTable, "Tipo", 110, CompilerError::getType);
+        addColumn(errorTable, "Archivo", 140, CompilerError::getSource);
         addColumn(errorTable, "Linea", 70, CompilerError::getLine);
         addColumn(errorTable, "Columna", 80, CompilerError::getColumn);
         addColumn(errorTable, "Lexema", 140, CompilerError::getLexeme);
@@ -118,6 +124,32 @@ public class MainView extends BorderPane {
         addColumn(symbolTable, "Linea", 70, Symbol::getLine);
         addColumn(symbolTable, "Columna", 80, Symbol::getColumn);
         addColumn(symbolTable, "Detalle", 300, Symbol::getDetail);
+    }
+
+    /** op / arg1 / arg2 / result, plus the position, which is what a goto reads as. */
+    private void buildQuadrupleTable()
+    {
+        quadrupleTable.setPlaceholder(new Label("Sin cuartetas: solo un programa .pig sin errores se traduce."));
+
+        TableColumn<Quadruple, Void> index = new TableColumn<>("#");
+
+        index.setPrefWidth(60);
+        index.setSortable(false);
+        index.setCellFactory(column -> new TableCell<>()
+        {
+            @Override
+            protected void updateItem(Void item, boolean empty)
+            {
+                super.updateItem(item, empty);
+                setText(empty ? null : String.valueOf(getIndex()));
+            }
+        });
+        quadrupleTable.getColumns().add(index);
+
+        addColumn(quadrupleTable, "Operador", 130, Quadruple::op);
+        addColumn(quadrupleTable, "Arg 1", 150, Quadruple::arg1);
+        addColumn(quadrupleTable, "Arg 2", 150, Quadruple::arg2);
+        addColumn(quadrupleTable, "Resultado", 180, Quadruple::result);
     }
 
     /**
@@ -155,6 +187,11 @@ public class MainView extends BorderPane {
 
     public void showGeneratedC(String cCode) {
         generatedC.setText(cCode);
+    }
+
+    public void showQuadruples(List<Quadruple> quadruples)
+    {
+        quadrupleTable.setItems(FXCollections.observableArrayList(quadruples));
     }
 
     public void setStatus(String message) {

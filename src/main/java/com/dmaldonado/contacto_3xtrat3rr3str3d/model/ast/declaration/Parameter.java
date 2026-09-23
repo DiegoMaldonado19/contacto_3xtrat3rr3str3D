@@ -5,19 +5,31 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstVisitor;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.types.DataType;
 import java.util.List;
 
-/** esto fuerza : numerus, inside a function signature. */
+/**
+ * esto fuerza : numerus, inside a function signature.
+ *
+ * array marks the Y? form "[] entero miArray": the function receives the
+ * address of the caller's array, never a copy.
+ */
 public class Parameter extends AstNode
 {
     private final String   name;
     private final String   typeText;
     private final DataType type;
+    private final boolean  array;
 
-    public Parameter(String name, String typeText, int line, int column)
+    public Parameter(String name, String typeText, boolean array, int line, int column)
     {
         super(line, column);
         this.name     = name;
         this.typeText = typeText;
         this.type     = DataType.fromText(typeText);
+        this.array    = array;
+    }
+
+    public boolean isArray()
+    {
+        return array;
     }
 
     public String getName()
@@ -44,7 +56,7 @@ public class Parameter extends AstNode
     @Override
     public String getLabel()
     {
-        return "param " + name + " : " + typeText;
+        return "param " + name + " : " + (array ? "[] " : "") + typeText;
     }
 
     @Override
