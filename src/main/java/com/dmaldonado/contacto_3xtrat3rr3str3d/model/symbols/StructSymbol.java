@@ -16,9 +16,19 @@ public class StructSymbol extends Symbol
 {
     private final Map<String, VariableSymbol> attributes = new LinkedHashMap<>();
 
-    public StructSymbol(String name, String scopeName, int line, int column)
+    public StructSymbol(String name, String scopeName, boolean classType, int line, int column)
     {
-        super(name, DataType.ESTRUCTURA, name, SymbolCategory.STRUCT, scopeName, line, column);
+        super(name, DataType.ESTRUCTURA, name, classType ? SymbolCategory.CLASS : SymbolCategory.STRUCT,
+                scopeName, line, column);
+    }
+
+    /**
+     * A Zetariano class: its instances start as null and are created with new,
+     * while a structure variable gets its block as soon as it is declared.
+     */
+    public boolean isClass()
+    {
+        return getCategory() == SymbolCategory.CLASS;
     }
 
     /** @return false if the attribute name was already used in this structura. */

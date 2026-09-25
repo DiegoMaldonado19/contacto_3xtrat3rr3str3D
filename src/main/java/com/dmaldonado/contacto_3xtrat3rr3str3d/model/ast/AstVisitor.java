@@ -1,6 +1,7 @@
 package com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast;
 
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.ArrayDeclaration;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.ClassDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.FunctionDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.ImportDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.Parameter;
@@ -19,6 +20,8 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.MemberAccess
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.MethodCallExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.NewExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.ReadExpression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.TernaryExpression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.ThisExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.UnaryExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.Assignment;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.Block;
@@ -51,6 +54,7 @@ public interface AstVisitor<T>
     T visitArrayDeclaration(ArrayDeclaration node);
     T visitStructDeclaration(StructDeclaration node);
     T visitStructField(StructField node);
+    T visitClassDeclaration(ClassDeclaration node);
     T visitFunctionDeclaration(FunctionDeclaration node);
     T visitParameter(Parameter node);
 
@@ -80,6 +84,8 @@ public interface AstVisitor<T>
     T visitFunctionCallExpression(FunctionCallExpression node);
     T visitMethodCallExpression(MethodCallExpression node);
     T visitNewExpression(NewExpression node);
+    T visitThisExpression(ThisExpression node);
+    T visitTernaryExpression(TernaryExpression node);
     T visitReadExpression(ReadExpression node);
     T visitCompositeLiteralExpression(CompositeLiteralExpression node);
 }

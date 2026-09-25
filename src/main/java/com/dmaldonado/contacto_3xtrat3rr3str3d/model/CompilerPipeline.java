@@ -4,10 +4,15 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.grammar.PigLexer;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.grammar.PigParser;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.grammar.YLexer;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.grammar.YParser;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.grammar.ZLexer;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.grammar.ZParser;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.PigAstBuilder;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.SemanticAnalyzer;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.YAstBuilder;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ZAstBuilder;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstNode;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Language;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.ClassDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.ImportDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.Program;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.codegen.CEmitter;
@@ -94,18 +99,9 @@ public class CompilerPipeline
         ErrorManager errorManager = new ErrorManager();
         SymbolTable  symbolTable  = new SymbolTable();
         String       fileName     = sourcePath == null ? "" : sourcePath.getFileName().toString();
-        String       extension    = extensionOf(fileName);
+        String       extension    = FileManager.extensionOf(fileName);
 
         errorManager.setSource(fileName);
-
-        // ponytail: se reemplaza en la Fase 4, cuando Zetariano tenga front-end.
-        if ("z".equals(extension))
-        {
-            errorManager.addSemantic("Los archivos Zetariano (.z) se compilan a partir de la Fase 4.",
-                    fileName, 1, 1);
-            return new CompilationResult(null, symbolTable, List.of(), errorManager.getErrors(),
-                    List.of(), "");
-        }
 
         Language   language = Objects.requireNonNullElse(Language.fromExtension(extension), Language.PIG);
         ParsedUnit root     = parse(source, language, errorManager);
@@ -116,22 +112,57 @@ public class CompilerPipeline
                     List.of(), "");
         }
 
+        checkClassName(root.ast(), fileName, errorManager);
+
         // Los importados van primero: el .pig necesita ver lo que declaran.
         List<Unit> units = loadImports(root.ast(), sourcePath, errorManager);
         units.add(new Unit(fileName, root.ast()));
 
-        for (Unit unit : units)
+        // Un .z no tiene import: como las clases de un paquete de Java, ve a
+        // las demas clases de su carpeta. Solo se registran, y sus errores son
+        // de su propia compilacion, no de esta.
+        if (language == Language.Z)
         {
-            errorManager.setSource(unit.source());
-            guarded(() -> new SemanticAnalyzer(errorManager, symbolTable).visitProgram(unit.ast()),
-                    errorManager);
+            for (Program sibling : siblingClasses(sourcePath))
+            {
+                new SemanticAnalyzer(new ErrorManager(), symbolTable).register(sibling);
+            }
         }
+
+        // Dos pasadas sobre TODOS los archivos: primero se registra lo que cada
+        // uno declara y despues se leen los cuerpos. Asi Pila.z usa a Nodo sin
+        // importarlo, sea cual sea el orden de los import del .pig.
+        List<SemanticAnalyzer> analyzers = units.stream()
+                .map(unit -> new SemanticAnalyzer(errorManager, symbolTable))
+                .toList();
+
+        for (int i = 0; i < units.size(); i++)
+        {
+            Unit             unit     = units.get(i);
+            SemanticAnalyzer analyzer = analyzers.get(i);
+
+            errorManager.setSource(unit.source());
+            guarded(() ->
+            {
+                analyzer.register(unit.ast());
+                return null;
+            }, errorManager);
+        }
+        for (int i = 0; i < units.size(); i++)
+        {
+            Unit             unit     = units.get(i);
+            SemanticAnalyzer analyzer = analyzers.get(i);
+
+            errorManager.setSource(unit.source());
+            guarded(() -> analyzer.visitProgram(unit.ast()), errorManager);
+        }
+        errorManager.setSource(fileName);
 
         List<Quadruple> quadruples = List.of();
         String          cCode      = "";
 
         // Solo un programa sin errores se traduce, y solo un .pig tiene MAIOR
-        // que ejecutar: un .y se analiza y ahi termina.
+        // que ejecutar: un .y o un .z se analiza y ahi termina.
         if (errorManager.getErrors().isEmpty() && language == Language.PIG)
         {
             quadruples = new QuadrupleGenerator().generate(units.stream().map(Unit::ast).toList(),
@@ -153,6 +184,7 @@ public class CompilerPipeline
         {
             case PIG -> new PigLexer(chars);
             case Y   -> new YLexer(chars);
+            case Z   -> new ZLexer(chars);
         };
         lexer.removeErrorListeners();   // silence ANTLR's ConsoleErrorListener
 
@@ -179,6 +211,12 @@ public class CompilerPipeline
                 YParser                 parser = listenedBy(new YParser(tokens), errorManager);
                 YParser.ProgramaContext tree   = parser.programa();
                 yield finish(parser, tree, () -> new YAstBuilder().build(tree), errorManager);
+            }
+            case Z ->
+            {
+                ZParser                 parser = listenedBy(new ZParser(tokens), errorManager);
+                ZParser.ProgramaContext tree   = parser.programa();
+                yield finish(parser, tree, () -> new ZAstBuilder().build(tree), errorManager);
             }
         };
     }
@@ -286,13 +324,6 @@ public class CompilerPipeline
                         errorManager);
                 break;
             }
-            if ("z".equals(extension))
-            {
-                // ponytail: se reemplaza en la Fase 4, cuando Zetariano tenga front-end.
-                importError(declaration, "Los archivos Zetariano (.z) se podran importar a partir "
-                        + "de la Fase 4.", errorManager);
-                continue;
-            }
             if (language == null || language == Language.PIG)
             {
                 importError(declaration, "Solo se pueden importar archivos .y o .z, no '." + extension
@@ -332,6 +363,7 @@ public class CompilerPipeline
 
             errorManager.setSource(source);
             Program program = parse(content, language, errorManager).ast();
+            checkClassName(program, source, errorManager);
             errorManager.setSource(rootSource);
 
             if (program != null)
@@ -342,16 +374,62 @@ public class CompilerPipeline
         return units;
     }
 
+    /** The other .z files of the folder, parsed apart: their errors are not this file's. */
+    private List<Program> siblingClasses(Path rootPath)
+    {
+        List<Program> siblings = new ArrayList<>();
+
+        if (rootPath == null || rootPath.toAbsolutePath().getParent() == null)
+        {
+            return siblings;
+        }
+        try
+        {
+            for (Path file : FileManager.list(rootPath.toAbsolutePath().getParent()))
+            {
+                if (file.getFileName().toString().endsWith(".z") && !Files.isSameFile(file, rootPath))
+                {
+                    Program program = parse(FileManager.read(file), Language.Z, new ErrorManager()).ast();
+
+                    if (program != null)
+                    {
+                        siblings.add(program);
+                    }
+                }
+            }
+        }
+        catch (IOException exception)
+        {
+            LOGGER.log(Level.WARNING, "No se pudieron leer las clases vecinas de " + rootPath, exception);
+        }
+        return siblings;
+    }
+
+    /** Enunciado: "El archivo tiene que llamarse como la clase definida en el". */
+    private static void checkClassName(Program program, String fileName, ErrorManager errorManager)
+    {
+        if (program == null || program.getLanguage() != Language.Z || fileName.isEmpty())
+        {
+            return;
+        }
+
+        String expected = fileName.substring(0, fileName.length() - ".z".length());
+
+        for (AstNode global : program.getGlobals())
+        {
+            if (global instanceof ClassDeclaration type && !type.getName().equals(expected))
+            {
+                errorManager.addSemantic("La clase '" + type.getName() + "' debe estar en un archivo "
+                        + "llamado '" + type.getName() + ".z', no en '" + fileName + "'.",
+                        type.getName(), type.getLine(), type.getColumn());
+            }
+        }
+    }
+
     private static void importError(ImportDeclaration declaration, String description,
                                     ErrorManager errorManager)
     {
         errorManager.addSemantic(description, declaration.getRelativePath(),
                 declaration.getLine(), declaration.getColumn());
-    }
-
-    private static String extensionOf(String fileName)
-    {
-        int dot = fileName.lastIndexOf('.');
-        return dot < 0 ? "" : fileName.substring(dot + 1).toLowerCase();
     }
 }

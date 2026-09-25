@@ -8,7 +8,8 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast;
 public enum Language
 {
     PIG("pig"),
-    Y("y");
+    Y("y"),
+    Z("z");
 
     private final String extension;
 

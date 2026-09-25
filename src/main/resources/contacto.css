@@ -61,3 +61,31 @@
 
 .status-ok    { -fx-text-fill: #2E7D32; -fx-font-weight: bold; }
 .status-error { -fx-text-fill: #C62828; -fx-font-weight: bold; }
+
+/* ------------------------------ Arbol AST ------------------------------ */
+/* Mismo tema oscuro que el editor, y la linea:columna atenuada a la derecha. */
+
+.ast-tree,
+.ast-tree .tree-cell
+{
+    -fx-background-color: #1E1E1E;
+    -fx-text-fill: #E8E8E8;
+    -fx-font-family: "Consolas", "Courier New", monospace;
+    -fx-font-size: 13px;
+}
+
+.ast-tree .tree-cell:selected
+{
+    -fx-background-color: #264F78;
+}
+
+.ast-tree .tree-disclosure-node .arrow
+{
+    -fx-background-color: #858585;
+}
+
+.ast-position
+{
+    -fx-text-fill: #858585;
+    -fx-font-size: 11px;
+}

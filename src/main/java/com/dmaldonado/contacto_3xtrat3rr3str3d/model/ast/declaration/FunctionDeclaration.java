@@ -15,6 +15,9 @@ import java.util.List;
  * localVariables holds the declarations written in the VARIABILES[ ] section,
  * kept apart from the body so the semantic analyzer can tell a variable
  * declared where the language allows it from one declared mid function.
+ *
+ * A Zetariano constructor or method is a function too, with its ownerClass:
+ * it receives the object in the first slot of its frame.
  */
 public class FunctionDeclaration extends AstNode
 {
@@ -25,6 +28,9 @@ public class FunctionDeclaration extends AstNode
     private final List<AstNode>   localVariables;
     private final Block           body;
     private final boolean         returnsValue;
+    /** Class a constructor or method belongs to; null for a free function. */
+    private final String          ownerClass;
+    private final boolean         constructor;
 
     /** Set by the semantic analyzer: null when the signature was rejected as a duplicate. */
     private FunctionSymbol symbol;
@@ -32,6 +38,14 @@ public class FunctionDeclaration extends AstNode
     public FunctionDeclaration(String name, String returnTypeText, List<Parameter> parameters,
                                List<AstNode> localVariables, Block body, boolean returnsValue,
                                int line, int column)
+    {
+        this(name, returnTypeText, parameters, localVariables, body, returnsValue, null, false,
+                line, column);
+    }
+
+    public FunctionDeclaration(String name, String returnTypeText, List<Parameter> parameters,
+                               List<AstNode> localVariables, Block body, boolean returnsValue,
+                               String ownerClass, boolean constructor, int line, int column)
     {
         super(line, column);
         this.name           = name;
@@ -41,6 +55,8 @@ public class FunctionDeclaration extends AstNode
         this.localVariables = localVariables;
         this.body           = body;
         this.returnsValue   = returnsValue;
+        this.ownerClass     = ownerClass;
+        this.constructor    = constructor;
     }
 
     public String getName()
@@ -79,6 +95,16 @@ public class FunctionDeclaration extends AstNode
         return returnsValue;
     }
 
+    public String getOwnerClass()
+    {
+        return ownerClass;
+    }
+
+    public boolean isConstructor()
+    {
+        return constructor;
+    }
+
     public FunctionSymbol getSymbol()
     {
         return symbol;
@@ -98,6 +124,10 @@ public class FunctionDeclaration extends AstNode
     @Override
     public String getLabel()
     {
+        if (ownerClass != null)
+        {
+            return constructor ? "constructor " + name : "metodo " + returnTypeText + " " + name;
+        }
         return (returnsValue ? "ratio " + returnTypeText + " " : "actio ") + name;
     }
 

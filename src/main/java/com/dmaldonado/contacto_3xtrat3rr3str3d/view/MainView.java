@@ -1,14 +1,17 @@
 package com.dmaldonado.contacto_3xtrat3rr3str3d.view;
 
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstNode;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.codegen.Quadruple;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.errors.CompilerError;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.Symbol;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.function.Function;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
+import javafx.scene.control.ContentDisplay;
 import javafx.scene.control.Label;
 import javafx.scene.control.Separator;
 import javafx.scene.control.SplitPane;
@@ -19,14 +22,13 @@ import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.ToolBar;
+import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
-import org.fxmisc.flowless.VirtualizedScrollPane;
-import org.fxmisc.richtext.CodeArea;
 
 /**
  * LA VISTA (MVC). Arma la ventana, expone sus controles y pinta un resultado ya
@@ -34,10 +36,11 @@ import org.fxmisc.richtext.CodeArea;
  * puente al modelo.
  */
 public class MainView extends BorderPane {
-    private final CodeArea codeArea = HighlightingCodeArea.create();
+    private final TreeView<Path> workspaceTree = new TreeView<>();
+    private final TabPane editors = new TabPane();
     private final TableView<CompilerError> errorTable = new TableView<>();
     private final TableView<Symbol> symbolTable = new TableView<>();
-    private final TreeView<String> astTree = new TreeView<>();
+    private final TreeView<AstNode> astTree = new TreeView<>();
     private final ProcessStackPanel stackPanel = new ProcessStackPanel();
     private final TableView<Quadruple> quadrupleTable = new TableView<>();
     private final TextArea generatedC  = new TextArea();
@@ -48,11 +51,17 @@ public class MainView extends BorderPane {
     private final Tab errorTab = new Tab("Errores", errorTable);
     private final Tab codeTab  = new Tab("Codigo C", generatedC);
 
-    private final Button newButton = new Button("Nuevo");
+    private final Button openFolderButton = new Button("Abrir carpeta");
+    private final Button newButton = new Button("Nuevo archivo");
+    private final Button newFolderButton = new Button("Nueva carpeta");
     private final Button openButton = new Button("Abrir");
     private final Button saveButton = new Button("Guardar");
+    private final Button saveAsButton = new Button("Guardar como");
+    private final Button saveAllButton = new Button("Guardar todo");
+    private final Button exportFolderButton = new Button("Descargar carpeta");
     private final Button compileButton = new Button("Compilar");
     private final Button exportButton = new Button("Descargar .c");
+    private final Button exportTreeButton = new Button("Exportar arbol");
 
     private final Label statusLabel = new Label("Listo");
     private final Label fileLabel = new Label("Sin archivo");
@@ -61,10 +70,12 @@ public class MainView extends BorderPane {
         buildErrorTable();
         buildSymbolTable();
         buildQuadrupleTable();
+        buildTrees();
 
         generatedC.setEditable(false);
         generatedC.getStyleClass().add("code-output");
         exportButton.setDisable(true); // nothing valid has been compiled yet
+        exportTreeButton.setDisable(true);
 
         statusLabel.setPadding(new Insets(6, 12, 6, 12));
 
@@ -85,13 +96,14 @@ public class MainView extends BorderPane {
 
         compileButton.getStyleClass().add("compile-button");
 
-        return new ToolBar(newButton, openButton, saveButton, new Separator(),
-                compileButton, new Separator(), exportButton, spacer, fileLabel);
+        return new ToolBar(openFolderButton, newButton, newFolderButton, openButton, new Separator(),
+                saveButton, saveAsButton, saveAllButton, exportFolderButton, new Separator(),
+                compileButton, new Separator(), exportButton, exportTreeButton, spacer, fileLabel);
     }
 
+    /** Folder tree | open files | results, left to right. */
     private SplitPane buildCenter() {
-        VirtualizedScrollPane<CodeArea> editorScroll = new VirtualizedScrollPane<>(codeArea);
-
+        editors.setTabClosingPolicy(TabPane.TabClosingPolicy.ALL_TABS);
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         tabs.getTabs().addAll(errorTab,
                 new Tab("AST", astTree),
@@ -100,19 +112,62 @@ public class MainView extends BorderPane {
                 new Tab("Cuartetas", quadrupleTable),
                 codeTab);
 
-        SplitPane split = new SplitPane(editorScroll, tabs);
-        split.setDividerPositions(0.45);
+        SplitPane split = new SplitPane(workspaceTree, editors, tabs);
+        split.setDividerPositions(0.16, 0.56);
         return split;
+    }
+
+    /**
+     * The workspace shows names, not full paths; the AST shows each node with
+     * the line:column it was written at, dimmed to its right.
+     */
+    private void buildTrees()
+    {
+        workspaceTree.setCellFactory(tree -> new TreeCell<>()
+        {
+            @Override
+            protected void updateItem(Path item, boolean empty)
+            {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null
+                        : item.getFileName() == null ? item.toString() : item.getFileName().toString());
+            }
+        });
+
+        astTree.getStyleClass().add("ast-tree");
+        astTree.setCellFactory(tree -> new TreeCell<>()
+        {
+            private final Label position = new Label();
+
+            @Override
+            protected void updateItem(AstNode item, boolean empty)
+            {
+                super.updateItem(item, empty);
+
+                if (empty || item == null)
+                {
+                    setText(null);
+                    setGraphic(null);
+                    return;
+                }
+                position.setText(item.getLine() + ":" + item.getColumn());
+                position.getStyleClass().setAll("ast-position");
+                setText(item.getLabel());
+                setGraphic(position);
+                setContentDisplay(ContentDisplay.RIGHT);
+                setGraphicTextGap(12);
+            }
+        });
     }
 
     private void buildErrorTable() {
         errorTable.setPlaceholder(new Label("Sin errores."));
-        addColumn(errorTable, "Tipo", 110, CompilerError::getType);
-        addColumn(errorTable, "Archivo", 140, CompilerError::getSource);
-        addColumn(errorTable, "Linea", 70, CompilerError::getLine);
-        addColumn(errorTable, "Columna", 80, CompilerError::getColumn);
-        addColumn(errorTable, "Lexema", 140, CompilerError::getLexeme);
-        addColumn(errorTable, "Descripcion", 460, CompilerError::getDescription);
+        addColumn(errorTable, "Tipo", 85, CompilerError::getType);
+        addColumn(errorTable, "Archivo", 85, CompilerError::getSource);
+        addColumn(errorTable, "Linea", 50, CompilerError::getLine);
+        addColumn(errorTable, "Columna", 60, CompilerError::getColumn);
+        addColumn(errorTable, "Lexema", 80, CompilerError::getLexeme);
+        addColumn(errorTable, "Descripcion", 620, CompilerError::getDescription);
     }
 
     private void buildSymbolTable() {
@@ -181,8 +236,30 @@ public class MainView extends BorderPane {
     }
 
     /** Raiz null limpia la pestana: un programa con errores no se grafica. */
-    public void showAst(TreeItem<String> root) {
+    public void showAst(TreeItem<AstNode> root) {
         astTree.setRoot(root);
+        exportTreeButton.setDisable(root == null);
+    }
+
+    public void showWorkspace(TreeItem<Path> root)
+    {
+        workspaceTree.setRoot(root);
+    }
+
+    /**
+     * A new tab for the file, selected so it is the one the user sees and
+     * compiles. It takes the place of the blank tab the window starts with.
+     */
+    public EditorTab openEditor(Path path, String content)
+    {
+        EditorTab editor = new EditorTab(path, content);
+
+        editors.getTabs().removeIf(tab -> tab instanceof EditorTab blank && blank.getPath() == null
+                && !blank.isModified() && blank.getCodeArea().getText().isEmpty());
+
+        editors.getTabs().add(editor);
+        editors.getSelectionModel().select(editor);
+        return editor;
     }
 
     public void showGeneratedC(String cCode) {
@@ -223,8 +300,30 @@ public class MainView extends BorderPane {
         return generatedC.getText();
     }
 
-    public CodeArea getCodeArea() {
-        return codeArea;
+    /** The file the user is looking at; null when no file is open. */
+    public EditorTab getActiveEditor()
+    {
+        return (EditorTab) editors.getSelectionModel().getSelectedItem();
+    }
+
+    public List<EditorTab> getEditors()
+    {
+        return editors.getTabs().stream().map(EditorTab.class::cast).toList();
+    }
+
+    public TabPane getEditorTabs()
+    {
+        return editors;
+    }
+
+    public TreeView<Path> getWorkspaceTree()
+    {
+        return workspaceTree;
+    }
+
+    public TreeView<AstNode> getAstTree()
+    {
+        return astTree;
     }
 
     public TableView<CompilerError> getErrorTable() {
@@ -237,6 +336,36 @@ public class MainView extends BorderPane {
 
     public Button getNewButton() {
         return newButton;
+    }
+
+    public Button getOpenFolderButton()
+    {
+        return openFolderButton;
+    }
+
+    public Button getNewFolderButton()
+    {
+        return newFolderButton;
+    }
+
+    public Button getSaveAsButton()
+    {
+        return saveAsButton;
+    }
+
+    public Button getSaveAllButton()
+    {
+        return saveAllButton;
+    }
+
+    public Button getExportFolderButton()
+    {
+        return exportFolderButton;
+    }
+
+    public Button getExportTreeButton()
+    {
+        return exportTreeButton;
     }
 
     public Button getOpenButton() {

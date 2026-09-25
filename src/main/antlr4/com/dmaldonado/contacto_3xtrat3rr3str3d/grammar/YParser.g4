@@ -16,11 +16,11 @@ options { tokenVocab = YLexer; }
  *   - los arreglos se pasan como '[] entero arr' y las estructuras como
  *     '{} MiEstructura s', ambos por referencia
  *
- * Limites conocidos, que ningun ejemplo del enunciado toca: un literal { }
- * partido en varias lineas, una '}' sangrada al nivel de los 'caso', y una
- * linea que empieza con '(' justo despues de una expresion (se leeria como
- * llamada). Tampoco hay ++ prefijo: pegado a la linea anterior cambiaria su
- * significado.
+ * Limites conocidos, que ningun ejemplo del enunciado toca: una '}' sangrada
+ * al nivel de los 'caso', y una linea que empieza con '(' justo despues de una
+ * expresion (se leeria como llamada). Tampoco hay ++ prefijo: pegado a la linea
+ * anterior cambiaria su significado. Un literal { } si puede partirse en
+ * varias lineas: YLexer no cuenta la sangria dentro de el.
  */
 
 @parser::members {
@@ -92,7 +92,7 @@ instruccion
     ;
 
 declaracionVariable
-    : tipo ID COR_IZQ expresion COR_DER ( ASIGNACION literalCompuesto )?   # declaracionArreglo
+    : tipo ID ( COR_IZQ expresion COR_DER )+ ( ASIGNACION literalCompuesto )?   # declaracionArreglo
     | tipo ID ( ASIGNACION expresion )?                                     # declaracionSimple
     ;
 

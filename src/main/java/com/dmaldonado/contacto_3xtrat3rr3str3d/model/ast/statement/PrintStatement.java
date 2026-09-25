@@ -6,20 +6,31 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Expression;
 import java.util.ArrayList;
 import java.util.List;
 
-/** &gt;&gt; "Bienvenido" &gt;&gt; comandante; -- translated to %OINK. */
+/**
+ * &gt;&gt; "Bienvenido" &gt;&gt; comandante;  imprimir(x)  println(x)  print(x)
+ *
+ * newline is false only for Zetariano's print: every other form ends the line.
+ */
 public class PrintStatement extends AstNode
 {
     private final List<Expression> values;
+    private final boolean          newline;
 
-    public PrintStatement(List<Expression> values, int line, int column)
+    public PrintStatement(List<Expression> values, boolean newline, int line, int column)
     {
         super(line, column);
-        this.values = values;
+        this.values  = values;
+        this.newline = newline;
     }
 
     public List<Expression> getValues()
     {
         return values;
+    }
+
+    public boolean endsLine()
+    {
+        return newline;
     }
 
     @Override

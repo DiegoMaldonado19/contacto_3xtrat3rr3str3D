@@ -193,15 +193,15 @@ public class PigAstBuilder extends PigParserBaseVisitor<AstNode>
     @Override
     public AstNode visitDeclaracionArreglo(PigParser.DeclaracionArregloContext ctx)
     {
-        Expression       size   = expression(ctx.expresion());
-        List<Expression> values = expressionList(ctx.listaExpresiones());
+        List<Expression> dimensions = expressions(ctx.expresion());
+        List<Expression> values     = expressionList(ctx.listaExpresiones());
 
-        if (missing(ctx.ID()) || size == null || values == null)
+        if (missing(ctx.ID()) || dimensions == null || values == null)
         {
             return null;
         }
-        return new ArrayDeclaration(ctx.ID().getText(), size, arrayTypeText(ctx, values), values,
-                line(ctx), column(ctx));
+        return new ArrayDeclaration(ctx.ID().getText(), dimensions, dimensions.size(),
+                arrayTypeText(ctx, values), values, line(ctx), column(ctx));
     }
 
     /** Sin tipo explicito se deduce del primer valor; sin valores, lo reporta la semantica. */
@@ -489,7 +489,7 @@ public class PigAstBuilder extends PigParserBaseVisitor<AstNode>
             }
             values.add(printed);
         }
-        return new PrintStatement(values, line(ctx), column(ctx));
+        return new PrintStatement(values, true, line(ctx), column(ctx));
     }
 
     /** Without a destino the read discards the value: expression() gives null. */
@@ -756,20 +756,23 @@ public class PigAstBuilder extends PigParserBaseVisitor<AstNode>
     /** Null when an item did not build: dropping it silently would change the arity. */
     private List<Expression> expressionList(PigParser.ListaExpresionesContext ctx)
     {
+        return ctx == null ? new ArrayList<>() : expressions(ctx.expresion());
+    }
+
+    /** Null when any of them did not build. */
+    private List<Expression> expressions(List<PigParser.ExpresionContext> items)
+    {
         List<Expression> values = new ArrayList<>();
 
-        if (ctx != null)
+        for (PigParser.ExpresionContext item : items)
         {
-            for (PigParser.ExpresionContext item : ctx.expresion())
-            {
-                Expression value = expression(item);
+            Expression value = expression(item);
 
-                if (value == null)
-                {
-                    return null;
-                }
-                values.add(value);
+            if (value == null)
+            {
+                return null;
             }
+            values.add(value);
         }
         return values;
     }

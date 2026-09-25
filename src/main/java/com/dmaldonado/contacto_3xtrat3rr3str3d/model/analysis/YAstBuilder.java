@@ -194,10 +194,10 @@ public class YAstBuilder extends YParserBaseVisitor<AstNode>
     @Override
     public AstNode visitDeclaracionArreglo(YParser.DeclaracionArregloContext ctx)
     {
-        Expression size = expression(ctx.expresion());
-        AstNode    list = child(ctx.literalCompuesto());
+        List<Expression> dimensions = expressions(ctx.expresion());
+        AstNode          list       = child(ctx.literalCompuesto());
 
-        if (missing(ctx.ID(), ctx.tipo()) || size == null || broken(ctx.literalCompuesto(), list))
+        if (missing(ctx.ID(), ctx.tipo()) || dimensions == null || broken(ctx.literalCompuesto(), list))
         {
             return null;
         }
@@ -205,8 +205,8 @@ public class YAstBuilder extends YParserBaseVisitor<AstNode>
         List<Expression> values = list instanceof CompositeLiteralExpression literal
                 ? literal.getValues() : new ArrayList<>();
 
-        return new ArrayDeclaration(ctx.ID().getText(), size, ctx.tipo().getText(), values,
-                line(ctx), column(ctx));
+        return new ArrayDeclaration(ctx.ID().getText(), dimensions, dimensions.size(),
+                ctx.tipo().getText(), values, line(ctx), column(ctx));
     }
 
     @Override
@@ -423,7 +423,7 @@ public class YAstBuilder extends YParserBaseVisitor<AstNode>
     {
         List<Expression> values = expressionList(ctx.listaExpresiones());
 
-        return values == null ? null : new PrintStatement(values, line(ctx), column(ctx));
+        return values == null ? null : new PrintStatement(values, true, line(ctx), column(ctx));
     }
 
     @Override
@@ -628,20 +628,23 @@ public class YAstBuilder extends YParserBaseVisitor<AstNode>
 
     private List<Expression> expressionList(YParser.ListaExpresionesContext ctx)
     {
+        return ctx == null ? new ArrayList<>() : expressions(ctx.expresion());
+    }
+
+    /** Null when any of them did not build. */
+    private List<Expression> expressions(List<YParser.ExpresionContext> items)
+    {
         List<Expression> values = new ArrayList<>();
 
-        if (ctx != null)
+        for (YParser.ExpresionContext item : items)
         {
-            for (YParser.ExpresionContext item : ctx.expresion())
-            {
-                Expression value = expression(item);
+            Expression value = expression(item);
 
-                if (value == null)
-                {
-                    return null;
-                }
-                values.add(value);
+            if (value == null)
+            {
+                return null;
             }
+            values.add(value);
         }
         return values;
     }

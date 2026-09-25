@@ -36,6 +36,12 @@ public final class TypeSystem
         {
             return DataType.ERROR;
         }
+        // Zetariano's % is the integer remainder: a decimal operand has none.
+        if ("%".equals(operator))
+        {
+            return left == DataType.DECIMALIS || right == DataType.DECIMALIS
+                    ? DataType.ERROR : DataType.NUMERUS;
+        }
 
         // Highest rank wins: littera < numerus < decimalis
         return left.getRank() >= right.getRank() ? left : right;
@@ -45,12 +51,17 @@ public final class TypeSystem
 
     public static DataType relationalResult(DataType left, DataType right, String operator)
     {
+        boolean isEquality = "==".equals(operator) || "!=".equals(operator);
+
+        // Objects compare by identity, and against null: p1 == null, p1 != p2.
+        if (isEquality && isReference(left) && isReference(right))
+        {
+            return DataType.BOOLEANO;
+        }
         if (!left.isPrimitive() || !right.isPrimitive())
         {
             return DataType.ERROR;
         }
-
-        boolean isEquality = "==".equals(operator) || "!=".equals(operator);
 
         // == and != work between equal types, textum and bool included.
         if (isEquality && left == right)
@@ -63,6 +74,12 @@ public final class TypeSystem
             return DataType.BOOLEANO;
         }
         return DataType.ERROR;
+    }
+
+    /** Held by address in the heap: an object, a structura, or the null that fits them. */
+    private static boolean isReference(DataType type)
+    {
+        return type == DataType.ESTRUCTURA || type == DataType.NULO;
     }
 
     /* ================= Logical: && || non ================= */
@@ -108,6 +125,10 @@ public final class TypeSystem
         if (target == source)
         {
             return true;
+        }
+        if (source == DataType.NULO)
+        {
+            return target == DataType.ESTRUCTURA || target == DataType.TEXTUM;
         }
         if (target == DataType.DECIMALIS)
         {

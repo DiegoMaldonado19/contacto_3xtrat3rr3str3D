@@ -3,7 +3,9 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.model.codegen;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstNode;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstVisitor;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Expression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Language;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.ArrayDeclaration;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.ClassDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.FunctionDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.ImportDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.Parameter;
@@ -22,6 +24,8 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.MemberAccess
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.MethodCallExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.NewExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.ReadExpression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.TernaryExpression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.ThisExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.UnaryExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.Assignment;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.Block;
@@ -38,8 +42,10 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.PrintStatemen
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.ReturnStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.SwitchStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.WhileStatement;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.ArraySymbol;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.FunctionSymbol;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.Symbol;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.SymbolCategory;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.VariableSymbol;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.types.DataType;
 import java.nio.charset.StandardCharsets;
@@ -63,8 +69,12 @@ import java.util.Set;
  *   stack[P + k]     marco de la funcion activa: [0] retorno, [1..n]
  *                    parametros, luego las locales (el slot lo reparte la
  *                    tabla de simbolos)
- *   heap             cadenas, arreglos y estructuras; la variable guarda el
- *                    puntero, asi que pasarlas es pasarlas por referencia
+ *   heap             cadenas, arreglos, estructuras y objetos; la variable
+ *                    guarda el puntero, asi que pasarlas es pasarlas por
+ *                    referencia. Una matriz se aplana fila por fila.
+ *
+ * Un metodo es una funcion mas: recibe su objeto en stack[P + 1], antes que
+ * los parametros, y un atributo nombrado a secas es heap[this + indice].
  *
  * Los temporales son locales de cada funcion C, no globales: con globales,
  * fib(n - 1) + fib(n - 2) perderia el primer resultado en la segunda llamada.
@@ -92,6 +102,8 @@ public class QuadrupleGenerator implements AstVisitor<String>
     private final Map<String, Integer>           stringPool  = new LinkedHashMap<>();
     /** Layout of every structure, in the order they are declared: .campo is its index. */
     private final Map<String, StructDeclaration> structs     = new HashMap<>();
+    /** The layouts above that are classes: their instances start as null, never pre-allocated. */
+    private final Set<String>                    classes     = new HashSet<>();
     private final Deque<String>                  breakLabels    = new ArrayDeque<>();
     private final Deque<String>                  continueLabels = new ArrayDeque<>();
 
@@ -101,6 +113,10 @@ public class QuadrupleGenerator implements AstVisitor<String>
     private int labelCount;
     /** Slots of the frame being generated: a call moves P past them. */
     private int frameSize;
+    /** Class whose methods are being generated: an attribute named alone belongs to it. */
+    private String   currentClass;
+    /** Language of the code being generated: each one writes its booleans its own way. */
+    private Language language;
 
     /**
      * @param programs   the imported files first, the .pig with MAIOR last.
@@ -108,6 +124,7 @@ public class QuadrupleGenerator implements AstVisitor<String>
      */
     public List<Quadruple> generate(List<Program> programs, int globalSize)
     {
+        // Every layout first: a method may reach an object of a class another file declares.
         for (Program program : programs)
         {
             for (AstNode global : program.getGlobals())
@@ -115,6 +132,23 @@ public class QuadrupleGenerator implements AstVisitor<String>
                 if (global instanceof StructDeclaration struct)
                 {
                     struct.accept(this);
+                }
+                else if (global instanceof ClassDeclaration type)
+                {
+                    structs.put(type.getName(), type.getLayout());
+                    classes.add(type.getName());
+                }
+            }
+        }
+        for (Program program : programs)
+        {
+            language = program.getLanguage();
+
+            for (AstNode global : program.getGlobals())
+            {
+                if (global instanceof ClassDeclaration type)
+                {
+                    type.accept(this);
                 }
             }
             for (FunctionDeclaration function : program.getFunctions())
@@ -124,6 +158,8 @@ public class QuadrupleGenerator implements AstVisitor<String>
         }
 
         Program root = programs.get(programs.size() - 1);
+
+        language = root.getLanguage();
 
         emit("function", "", "", "main");
         int prologue = code.size();
@@ -197,7 +233,7 @@ public class QuadrupleGenerator implements AstVisitor<String>
         {
             value = node.getInitialValue().accept(this);
         }
-        else if (node.getType() == DataType.ESTRUCTURA)
+        else if (node.getType() == DataType.ESTRUCTURA && !classes.contains(node.getTypeText()))
         {
             value = allocateStruct(node.getTypeText(), new HashSet<>());
         }
@@ -209,14 +245,30 @@ public class QuadrupleGenerator implements AstVisitor<String>
         return null;
     }
 
+    /** One block for every dimension together; a Zetariano "int[] a;" stays null. */
     @Override
     public String visitArrayDeclaration(ArrayDeclaration node)
     {
-        List<Expression> values        = node.getInitialValues();
-        String           elementStruct = node.getElementType() == DataType.ESTRUCTURA
-                                         && values.isEmpty() ? node.getTypeText() : null;
-        String           pointer       = allocateArray(node.getSize().accept(this), elementStruct,
-                                                       new HashSet<>());
+        if (node.getDimensions().isEmpty())
+        {
+            store(slotOf(node.getSymbol()), "0");
+            return null;
+        }
+
+        List<Expression> values        = node.getFlatValues();
+        String           elementStruct = node.getElementType() == DataType.ESTRUCTURA && values.isEmpty()
+                                         && !classes.contains(node.getTypeText()) ? node.getTypeText() : null;
+        String           size          = node.getDimensions().get(0).accept(this);
+
+        for (int k = 1; k < node.getDimensions().size(); k++)
+        {
+            String total = newTemporary();
+
+            emit("*", size, node.getDimensions().get(k).accept(this), total);
+            size = total;
+        }
+
+        String pointer = allocateArray(size, elementStruct, new HashSet<>());
 
         store(slotOf(node.getSymbol()), pointer);
 
@@ -244,6 +296,21 @@ public class QuadrupleGenerator implements AstVisitor<String>
     @Override
     public String visitParameter(Parameter node)
     {
+        return null;
+    }
+
+    /** Its layout was recorded by generate(): here every constructor and method becomes a function. */
+    @Override
+    public String visitClassDeclaration(ClassDeclaration node)
+    {
+        String previousClass = currentClass;
+
+        currentClass = node.getName();
+        for (FunctionDeclaration method : node.getMethods())
+        {
+            method.accept(this);
+        }
+        currentClass = previousClass;
         return null;
     }
 
@@ -347,12 +414,24 @@ public class QuadrupleGenerator implements AstVisitor<String>
         String update = newLabel();
         String end    = newLabel();
 
-        node.getInitialization().accept(this);
+        // Zetariano's for ( ; ; ) may leave out any of the three parts.
+        if (node.getInitialization() != null)
+        {
+            node.getInitialization().accept(this);
+        }
         label(start);
-        emit("ifFalse", node.getCondition().accept(this), "", end);
+
+        if (node.getCondition() != null)
+        {
+            emit("ifFalse", node.getCondition().accept(this), "", end);
+        }
         loopBody(node.getBody(), end, update);
         label(update);
-        node.getUpdate().accept(this);
+
+        if (node.getUpdate() != null)
+        {
+            node.getUpdate().accept(this);
+        }
         jump(start);
         label(end);
         return null;
@@ -429,17 +508,21 @@ public class QuadrupleGenerator implements AstVisitor<String>
         return null;
     }
 
-    /** Each value by its own native, then one line break: >> a >> b prints "ab\n". */
+    /** Each value by its own native, then one line break: >> a >> b prints "ab\n". Zetariano's print has none. */
     @Override
     public String visitPrintStatement(PrintStatement node)
     {
         for (Expression value : node.getValues())
         {
-            String operand = value.accept(this);
+            String   operand = value.accept(this);
+            DataType type    = value.getComputedType();
 
-            emit(printer(value.getComputedType()), operand, "", "");
+            emit(printer(type), operand, type == DataType.BOOLEANO ? booleanStyle() : "", "");
         }
-        emit("printLine", "", "", "");
+        if (node.endsLine())
+        {
+            emit("printLine", "", "", "");
+        }
         return null;
     }
 
@@ -469,7 +552,11 @@ public class QuadrupleGenerator implements AstVisitor<String>
 
         if (expression instanceof FunctionCallExpression call)
         {
-            call(call, false);
+            call(call.getFunction(), implicitReceiver(call.getFunction()), call.getArguments(), false);
+        }
+        else if (expression instanceof MethodCallExpression call)
+        {
+            methodCall(call, false);
         }
         else if (expression instanceof ReadExpression)
         {
@@ -517,7 +604,12 @@ public class QuadrupleGenerator implements AstVisitor<String>
         }
 
         // numerus / numerus trunca: 7 / 2 es 3, aunque en C todo sea float.
-        String op     = "/".equals(operator) && node.getComputedType() == DataType.NUMERUS ? "div" : operator;
+        String op     = switch (operator)
+        {
+            case "/" -> node.getComputedType() == DataType.NUMERUS ? "div" : operator;
+            case "%" -> "mod";
+            default  -> operator;
+        };
         String result = newTemporary();
 
         emit(op, left, right, result);
@@ -606,6 +698,7 @@ public class QuadrupleGenerator implements AstVisitor<String>
             case TEXTUM   -> String.valueOf(intern(decode(node.getText())));
             case LITTERA  -> String.valueOf(decode(node.getText()).codePointAt(0));
             case BOOLEANO -> node.isTrue() ? "1" : "0";
+            case NULO     -> "0";   // no block lives at address 0: it is null
             case NUMERUS  -> node.getText().replaceFirst("^0+(?=\\d)", "");   // C reads 010 as octal 8
             default       -> node.getText();
         };
@@ -632,52 +725,104 @@ public class QuadrupleGenerator implements AstVisitor<String>
     @Override
     public String visitFunctionCallExpression(FunctionCallExpression node)
     {
-        return call(node, true);
+        return call(node.getFunction(), implicitReceiver(node.getFunction()), node.getArguments(), true);
     }
 
     /**
      * Every argument is evaluated BEFORE any is written: a nested call would
      * reuse the same slots, past this frame, and overwrite what was already
      * there. Then P moves past the frame, and back once the callee returns.
+     * A method gets its object ahead of the arguments, in the callee's slot 1.
      */
-    private String call(FunctionCallExpression node, boolean wantResult)
+    private String call(FunctionSymbol function, String receiver, List<Expression> arguments,
+                        boolean wantResult)
     {
-        List<String> arguments = new ArrayList<>();
+        List<String> values = new ArrayList<>();
 
-        for (Expression argument : node.getArguments())
+        if (receiver != null)
         {
-            arguments.add(argument.accept(this));
+            values.add(receiver);
         }
-        for (int i = 0; i < arguments.size(); i++)
+        for (Expression argument : arguments)
         {
-            store(new Location(STACK, offset("P", frameSize + 1 + i)), arguments.get(i));
+            values.add(argument.accept(this));
+        }
+        for (int i = 0; i < values.size(); i++)
+        {
+            store(new Location(STACK, offset("P", frameSize + 1 + i)), values.get(i));
         }
 
         String size = String.valueOf(frameSize);
 
         emit("+", "P", size, "P");
         emit("checkMemory", "", "", "");
-        emit("call", "", "", cName(node.getFunction()));
+        emit("call", "", "", cName(function));
         emit("-", "P", size, "P");
 
-        if (!wantResult || !node.getFunction().returnsValue())
+        if (!wantResult || !function.returnsValue())
         {
             return null;
         }
         return load(new Location(STACK, offset("P", frameSize)));
     }
 
-    /** The semantic analyzer rejects every object until Zetariano brings classes, in Fase 4. */
-    @Override
-    public String visitMethodCallExpression(MethodCallExpression node)
+    /** A method called without an object, from inside another one, runs on the same object. */
+    private String implicitReceiver(FunctionSymbol function)
     {
-        throw new UnsupportedOperationException("Los metodos llegan con Zetariano (Fase 4).");
+        return function.isMethod() ? self() : null;
+    }
+
+    /** The object of the running method, in slot 1 of its frame. */
+    private String self()
+    {
+        return load(new Location(STACK, offset("P", 1)));
     }
 
     @Override
+    public String visitMethodCallExpression(MethodCallExpression node)
+    {
+        return methodCall(node, true);
+    }
+
+    /** A method on null would read someone else's memory: it stops the program instead. */
+    private String methodCall(MethodCallExpression node, boolean wantResult)
+    {
+        String receiver = node.getOwner().accept(this);
+
+        emit("checkNull", receiver, "", "");
+        return call(node.getFunction(), receiver, node.getArguments(), wantResult);
+    }
+
+    /** The object is reserved first and the constructor then fills it, as its receiver. */
+    @Override
     public String visitNewExpression(NewExpression node)
     {
-        throw new UnsupportedOperationException("Los objetos llegan con Zetariano (Fase 4).");
+        String pointer = allocateStruct(node.getClassName(), new HashSet<>());
+
+        call(node.getConstructor(), pointer, node.getArguments(), false);
+        return pointer;
+    }
+
+    @Override
+    public String visitThisExpression(ThisExpression node)
+    {
+        return self();
+    }
+
+    @Override
+    public String visitTernaryExpression(TernaryExpression node)
+    {
+        String result    = newTemporary();
+        String otherwise = newLabel();
+        String end       = newLabel();
+
+        emit("ifFalse", node.getCondition().accept(this), "", otherwise);
+        emit("=", node.getWhenTrue().accept(this), "", result);
+        jump(end);
+        label(otherwise);
+        emit("=", node.getWhenFalse().accept(this), "", result);
+        label(end);
+        return result;
     }
 
     @Override
@@ -731,28 +876,76 @@ public class QuadrupleGenerator implements AstVisitor<String>
                 : offset("P", symbol.getOffset()));
     }
 
-    /** Where an assignable expression lives: x, a[i] or s.campo, chained as deep as needed. */
+    /** Where an assignable expression lives: x, a[i][j] or s.campo, chained as deep as needed. */
     private Location locate(Expression target)
     {
         if (target instanceof IdentifierExpression identifier)
         {
-            return slotOf(identifier.getSymbol());
+            Symbol symbol = identifier.getSymbol();
+
+            // An attribute named alone inside a method: the attribute of this object.
+            if (symbol.getCategory() == SymbolCategory.ATTRIBUTE)
+            {
+                return new Location(HEAP, offset(self(), fieldIndex(structs.get(currentClass), symbol.getName())));
+            }
+            return slotOf(symbol);
         }
         if (target instanceof ArrayAccessExpression access)
         {
-            String pointer = access.getArray().accept(this);
-            String index   = access.getIndex().accept(this);
-            String address = newTemporary();
-
-            emit("+", pointer, index, address);
-            return new Location(HEAP, address);
+            return element(access);
         }
 
         MemberAccessExpression member = (MemberAccessExpression) target;
         String                 owner  = member.getOwner().accept(this);
-        StructDeclaration      struct = structs.get(member.getOwner().getStructName());
+        String                 type   = member.getOwner().getStructName();
 
-        return new Location(HEAP, offset(owner, fieldIndex(struct, member.getMemberName())));
+        if (classes.contains(type))
+        {
+            emit("checkNull", owner, "", "");
+        }
+        return new Location(HEAP, offset(owner, fieldIndex(structs.get(type), member.getMemberName())));
+    }
+
+    /**
+     * m[i][j] is ONE cell of the flattened matrix: m + i * columns + j, the
+     * strides taken from the declared dimensions. An array whose size is not
+     * known here, a parameter or an attribute, may still be null.
+     */
+    private Location element(ArrayAccessExpression access)
+    {
+        List<Expression> indices = new ArrayList<>();
+        Expression       base    = access;
+
+        while (base instanceof ArrayAccessExpression inner)
+        {
+            indices.add(0, inner.getIndex());
+            base = inner.getArray();
+        }
+
+        List<Integer> dimensions = base instanceof IdentifierExpression identifier
+                                   && identifier.getSymbol() instanceof ArraySymbol array
+                                   ? array.getDimensions() : List.of(-1);
+        String        pointer    = base.accept(this);
+        String        index      = indices.get(0).accept(this);
+
+        if (dimensions.get(0) < 0)
+        {
+            emit("checkNull", pointer, "", "");
+        }
+        for (int k = 1; k < indices.size(); k++)
+        {
+            String row  = newTemporary();
+            String cell = newTemporary();
+
+            emit("*", index, String.valueOf(dimensions.get(k)), row);
+            emit("+", row, indices.get(k).accept(this), cell);
+            index = cell;
+        }
+
+        String address = newTemporary();
+
+        emit("+", pointer, index, address);
+        return new Location(HEAP, address);
     }
 
     private String load(Location location)
@@ -842,7 +1035,8 @@ public class QuadrupleGenerator implements AstVisitor<String>
         for (int i = 0; i < fields.size(); i++)
         {
             StructField field  = fields.get(i);
-            String      nested = field.getType() == DataType.ESTRUCTURA
+            // An object inside another starts as null: only structures are expanded.
+            String      nested = field.getType() == DataType.ESTRUCTURA && !classes.contains(field.getTypeText())
                                  && !expanding.contains(field.getTypeText()) ? field.getTypeText() : null;
             String      value  = null;
 
@@ -927,9 +1121,15 @@ public class QuadrupleGenerator implements AstVisitor<String>
             case TEXTUM    -> operand;
             case DECIMALIS -> nativeCall("floatToString", operand, "");
             case LITTERA   -> nativeCall("charToString", operand, "");
-            case BOOLEANO  -> nativeCall("boolToString", operand, "");
+            case BOOLEANO  -> nativeCall("boolToString", operand, booleanStyle());
             default        -> nativeCall("intToString", operand, "");
         };
+    }
+
+    /** verum, verdadero or true: the index of the language, which the natives in C use. */
+    private String booleanStyle()
+    {
+        return String.valueOf(language.ordinal());
     }
 
     private String nativeCall(String name, String first, String second)
@@ -970,7 +1170,7 @@ public class QuadrupleGenerator implements AstVisitor<String>
      */
     private static String cName(FunctionSymbol function)
     {
-        StringBuilder name      = new StringBuilder("fn_" + function.getName());
+        StringBuilder name      = new StringBuilder("fn_" + function.getName().replace('.', '_'));
         String        separator = "__";
 
         for (VariableSymbol parameter : function.getParameters())

@@ -13,7 +13,10 @@ public enum SymbolCategory
     PARAMETER("Parametro"),
     ARRAY("Arreglo"),
     FUNCTION("Funcion"),
+    METHOD("Metodo"),
+    CONSTRUCTOR("Constructor"),
     STRUCT("Estructura"),
+    CLASS("Clase"),
     ATTRIBUTE("Atributo");
 
     private final String label;

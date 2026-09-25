@@ -5,6 +5,7 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstVisitor;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Expression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Language;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.ArrayDeclaration;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.ClassDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.FunctionDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.ImportDeclaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration.Parameter;
@@ -23,6 +24,8 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.MemberAccess
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.MethodCallExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.NewExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.ReadExpression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.TernaryExpression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.ThisExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.UnaryExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.Assignment;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.Block;
@@ -50,6 +53,7 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.VariableSymbol;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.types.DataType;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.types.TypeSystem;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -77,6 +81,8 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     private Language            language;
     /** Function being analyzed; null inside MAIOR. */
     private FunctionDeclaration currentFunction;
+    /** Class whose methods are being analyzed; null outside a .z file. */
+    private StructSymbol        currentClass;
     /** Loop nesting: interrumpe/perge are only valid when greater than zero. */
     private int                 loopDepth;
     /** elegir nesting: romper also leaves an elegir. */
@@ -100,9 +106,13 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
      * PROGRAM
      * ================================================================= */
 
-    /** Paso 1 registra firmas, paso 2 recorre cuerpos: permite el uso adelantado. */
-    @Override
-    public DataType visitProgram(Program node)
+    /**
+     * Paso 1: estructuras, clases y firmas, antes de leer un solo cuerpo. El
+     * pipeline lo corre sobre TODOS los archivos antes del paso 2, asi un
+     * archivo usa lo que declara otro importado despues: Pila.z usa Nodo sin
+     * importarlo.
+     */
+    public void register(Program node)
     {
         language = node.getLanguage();
 
@@ -110,13 +120,24 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         {
             if (global instanceof StructDeclaration struct)
             {
-                registerStruct(struct);
+                registerStruct(struct, false);
+            }
+            else if (global instanceof ClassDeclaration type)
+            {
+                registerClass(type);
             }
         }
         for (FunctionDeclaration function : node.getFunctions())
         {
             registerFunctionSignature(function);
         }
+    }
+
+    /** Paso 2: recorre los cuerpos, con todo ya registrado por register(). */
+    @Override
+    public DataType visitProgram(Program node)
+    {
+        language = node.getLanguage();
 
         for (AstNode global : node.getGlobals())
         {
@@ -165,17 +186,9 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
             return DataType.ERROR;
         }
 
-        // Un objeto se reporta por su novus: buscar la clase como structura
-        // solo agregaria un "el tipo no existe" encima.
-        if (node.getInitialValue() instanceof NewExpression object)
-        {
-            object.accept(this);
-            declareVariable(node, DataType.ERROR, null);
-            return DataType.ERROR;
-        }
-
         DataType declaredType = node.getType();
         String   structName   = null;
+        boolean  object       = false;
 
         if (declaredType == DataType.ESTRUCTURA)
         {
@@ -183,11 +196,20 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
             if (struct == null)
             {
-                error(node, "El tipo '" + node.getTypeText() + "' no existe.", node.getTypeText());
+                // A novus of an unknown class says it better: report that one alone.
+                if (node.getInitialValue() instanceof NewExpression instance)
+                {
+                    instance.accept(this);
+                }
+                else
+                {
+                    error(node, "El tipo '" + node.getTypeText() + "' no existe.", node.getTypeText());
+                }
                 declareVariable(node, DataType.ERROR, null);
                 return DataType.ERROR;
             }
             structName = struct.getName();
+            object     = struct.isClass();
         }
 
         Expression value = node.getInitialValue();
@@ -204,10 +226,11 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
                         node.getName());
             }
         }
-        else if (declaredType == DataType.ESTRUCTURA && language == Language.PIG)
+        else if (declaredType == DataType.ESTRUCTURA && language == Language.PIG && !object)
         {
             // Statement: "todos los atributos tengan un valor explicito". En Y?
-            // "Persona alumno" si es valido: sus campos se llenan despues.
+            // "Persona alumno" si es valido: sus campos se llenan despues. Un
+            // objeto sin novus es null, como en Java.
             error(node, "La variable '" + node.getName() + "' de tipo '" + node.getTypeText()
                     + "' debe inicializar todos sus atributos.", node.getName());
         }
@@ -254,45 +277,29 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
             if (struct == null)
             {
                 error(node, "El tipo '" + node.getTypeText() + "' no existe.", node.getTypeText());
-                declareArray(node, DataType.ERROR, null, -1);
+                declareArray(node, DataType.ERROR, null, Collections.nCopies(Math.max(1, node.getRank()), -1));
                 return DataType.ERROR;
             }
             elementStructName = struct.getName();
         }
 
-        int size = -1;
+        List<Integer> dimensions = new ArrayList<>();
 
-        if (node.getSize() != null)
+        for (Expression size : node.getDimensions())
         {
-            DataType sizeType = node.getSize().accept(this);
-
-            if (sizeType != DataType.NUMERUS && sizeType != DataType.ERROR)
-            {
-                error(node, "El tamano del arreglo '" + node.getName()
-                        + "' debe ser 'numerus', se recibio '" + sizeType + "'.",
-                        node.getName());
-            }
-            Integer declared = extractInteger(node.getSize());
-
-            if (declared != null && declared < 0)
-            {
-                error(node, "El tamano del arreglo '" + node.getName()
-                        + "' no puede ser negativo.", node.getName());
-            }
-            else if (declared != null)
-            {
-                size = declared;
-            }
+            dimensions.add(dimension(node, size));
         }
+        validateDimensions(node, dimensions);
 
-        List<Expression> values = node.getInitialValues();
-
-        if (!values.isEmpty() && size >= 0 && values.size() != size)
+        if (dimensions.isEmpty())
         {
-            error(node, "El arreglo '" + node.getName() + "' declara " + size
-                    + " posiciones pero recibe " + values.size() + " valores.", node.getName());
+            dimensions = Collections.nCopies(node.getRank(), -1);   // "int[] a;" starts as null
         }
-        for (Expression value : values)
+        if (!node.getInitialValues().isEmpty())
+        {
+            validateShape(node, node.getInitialValues(), dimensions, 0);
+        }
+        for (Expression value : node.getFlatValues())
         {
             DataType valueType = checkValue(value, elementType, elementStructName, false);
 
@@ -304,15 +311,92 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
             }
         }
 
-        declareArray(node, elementType, elementStructName, size);
+        declareArray(node, elementType, elementStructName, dimensions);
         return elementType;
     }
 
+    /** One dimension: it has to be numerus. Its value when it is constant, -1 otherwise. */
+    private int dimension(ArrayDeclaration node, Expression size)
+    {
+        DataType sizeType = size.accept(this);
+
+        if (sizeType != DataType.NUMERUS && sizeType != DataType.ERROR)
+        {
+            error(node, "El tamano del arreglo '" + node.getName()
+                    + "' debe ser '" + describe(DataType.NUMERUS, null) + "', se recibio '"
+                    + describe(sizeType, null) + "'.", node.getName());
+        }
+
+        Integer declared = extractInteger(size);
+
+        if (declared != null && declared < 0)
+        {
+            error(node, "El tamano del arreglo '" + node.getName() + "' no puede ser negativo.",
+                    node.getName());
+            return -1;
+        }
+        return declared == null ? -1 : declared;
+    }
+
+    /**
+     * A matrix is flattened row by row, so where m[i][j] lives depends on every
+     * dimension but the first: those have to be known when compiling.
+     */
+    private void validateDimensions(ArrayDeclaration node, List<Integer> dimensions)
+    {
+        String name = node.getName();
+
+        if (dimensions.isEmpty() && node.getRank() > 1)
+        {
+            error(node, "La matriz '" + name + "' debe crearse al declararla, con 'new' o con sus "
+                    + "valores: de sus dimensiones depende donde vive cada posicion.", name);
+        }
+        else if (!dimensions.isEmpty() && dimensions.size() != node.getRank())
+        {
+            error(node, "'" + name + "' se declara con " + node.getRank() + " dimension(es) y se "
+                    + "crea con " + dimensions.size() + ".", name);
+        }
+        else if (dimensions.size() > 1 && dimensions.subList(1, dimensions.size()).contains(-1))
+        {
+            error(node, "Las dimensiones internas de la matriz '" + name + "' deben ser constantes: "
+                    + "de ellas depende donde vive cada posicion.", name);
+        }
+    }
+
+    /** The values against the dimensions, level by level: a matrix takes one { } per row. */
+    private void validateShape(ArrayDeclaration node, List<Expression> values, List<Integer> dimensions,
+                               int level)
+    {
+        int    expected = level < dimensions.size() ? dimensions.get(level) : -1;
+        String name     = node.getName();
+
+        if (expected >= 0 && values.size() != expected)
+        {
+            error(level == 0 ? node : values.get(0), "El arreglo '" + name + "' declara " + expected
+                    + " posiciones" + (level > 0 ? " por fila" : "") + " pero recibe " + values.size()
+                    + " valores.", name);
+        }
+        if (level + 1 >= dimensions.size())
+        {
+            return;
+        }
+        for (Expression row : values)
+        {
+            if (!(row instanceof CompositeLiteralExpression literal))
+            {
+                error(row, "La matriz '" + name + "' recibe sus valores fila por fila: se esperaba "
+                        + "'{ ... }'.", name);
+                return;
+            }
+            validateShape(node, literal.getValues(), dimensions, level + 1);
+        }
+    }
+
     private void declareArray(ArrayDeclaration node, DataType elementType, String elementStructName,
-                              int size)
+                              List<Integer> dimensions)
     {
         ArraySymbol symbol = new ArraySymbol(node.getName(), elementType, node.getTypeText(),
-                symbolTable.getCurrentScopeName(), size, node.getInitialValues().size(),
+                symbolTable.getCurrentScopeName(), dimensions, node.getFlatValues().size(),
                 elementStructName, node.getLine(), node.getColumn());
 
         symbolTable.declare(symbol);
@@ -323,7 +407,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     @Override
     public DataType visitStructDeclaration(StructDeclaration node)
     {
-        registerStruct(node);
+        registerStruct(node, false);
         validateStructFieldTypes(node);
         return DataType.ESTRUCTURA;
     }
@@ -338,6 +422,49 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     public DataType visitParameter(Parameter node)
     {
         return node.getType();
+    }
+
+    /**
+     * The attributes are in scope inside every method, below its parameters
+     * and locals: "cima = nuevo" reaches the attribute unless a local shadows it.
+     */
+    @Override
+    public DataType visitClassDeclaration(ClassDeclaration node)
+    {
+        validateStructFieldTypes(node.getLayout());
+
+        for (AstNode member : node.getPrivateMembers())
+        {
+            String name = member instanceof StructField field ? field.getName()
+                    : ((FunctionDeclaration) member).getName();
+
+            error(member, "El encapsulamiento se contempla en el Proyecto 2: quite 'private' de '"
+                    + name + "'.", "private");
+        }
+
+        StructSymbol previousClass = currentClass;
+
+        currentClass = symbolTable.lookupStruct(node.getName());
+        symbolTable.openScope(node.getName());
+
+        if (currentClass != null)
+        {
+            currentClass.getAttributes().values().forEach(symbolTable::declare);
+        }
+        for (FunctionDeclaration method : node.getMethods())
+        {
+            if (method.isConstructor() && !method.getName().equals(node.getName()))
+            {
+                error(method, "El constructor '" + method.getName() + "' debe llamarse como la clase '"
+                        + node.getName() + "'; si es un metodo, escriba su tipo de retorno.",
+                        method.getName());
+            }
+            method.accept(this);
+        }
+
+        symbolTable.closeScope();
+        currentClass = previousClass;
+        return DataType.VOID;
     }
 
     @Override
@@ -360,6 +487,14 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         {
             error(node, "El tipo de retorno '" + node.getReturnTypeText() + "' no existe.",
                     node.getReturnTypeText());
+        }
+
+        // A method receives its object in slot 1, ahead of the parameters.
+        if (node.getOwnerClass() != null)
+        {
+            symbolTable.declare(new VariableSymbol("this", DataType.ESTRUCTURA, node.getOwnerClass(),
+                    SymbolCategory.PARAMETER, node.getName(), true, node.getOwnerClass(), false,
+                    node.getLine(), node.getColumn()));
         }
 
         // Los parametros se declaran primero: ocupan los slots 1..n del marco,
@@ -386,7 +521,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         {
             if (local instanceof StructDeclaration struct)
             {
-                registerStruct(struct);
+                registerStruct(struct, false);
             }
         }
         for (AstNode local : node.getLocalVariables())
@@ -416,7 +551,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         }
         if (node.returnsValue() && !ReturnPathChecker.alwaysReturns(node.getBody()))
         {
-            error(node, "La funcion '" + node.getName()
+            error(node, functionWord(node, true) + " '" + node.getName()
                     + "' no retorna un valor en todos sus caminos posibles.", node.getName());
         }
 
@@ -435,7 +570,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         if (parameter.isArray())
         {
             return new ArraySymbol(parameter.getName(), parameter.getType(), parameter.getTypeText(),
-                    functionName, -1, 0, structName, parameter.getLine(), parameter.getColumn());
+                    functionName, List.of(-1), 0, structName, parameter.getLine(), parameter.getColumn());
         }
         return new VariableSymbol(parameter.getName(), parameter.getType(), parameter.getTypeText(),
                 SymbolCategory.PARAMETER, functionName, true, structName, false,
@@ -448,18 +583,18 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
     /**
      * En PigLatin no abre ambito: declarar dentro de un bloque de control ya es
-     * error. En Y? si, porque ahi se declara en cualquier parte.
+     * error. En Y? y Zetariano si, porque ahi se declara en cualquier parte.
      */
     @Override
     public DataType visitBlock(Block node)
     {
-        if (language == Language.Y)
+        if (language != Language.PIG)
         {
             symbolTable.openScope(symbolTable.getCurrentScopeName());
         }
         visitStatements(node);
 
-        if (language == Language.Y)
+        if (language != Language.PIG)
         {
             symbolTable.closeScope();
         }
@@ -519,7 +654,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     @Override
     public DataType visitWhileStatement(WhileStatement node)
     {
-        requireBooleanCondition(node.getCondition(), keyword("dum", "mientras"));
+        requireBooleanCondition(node.getCondition(), keyword("dum", "mientras", "while"));
         walkLoopBody(node.getBody());
         return DataType.VOID;
     }
@@ -528,7 +663,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     public DataType visitDoWhileStatement(DoWhileStatement node)
     {
         walkLoopBody(node.getBody());
-        requireBooleanCondition(node.getCondition(), keyword("facere-dum", "hacer-mientras"));
+        requireBooleanCondition(node.getCondition(), keyword("facere-dum", "hacer-mientras", "do-while"));
         return DataType.VOID;
     }
 
@@ -549,7 +684,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         }
         declarationsForbidden = previousForbidden;
 
-        requireBooleanCondition(node.getCondition(), keyword("per", "para"));
+        requireBooleanCondition(node.getCondition(), keyword("per", "para", "for"));
 
         if (node.getUpdate() != null)
         {
@@ -579,8 +714,9 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
                 if (discriminant != DataType.ERROR && value != DataType.ERROR
                         && TypeSystem.relationalResult(discriminant, value, "==") == DataType.ERROR)
                 {
-                    error(clause.getValue(), "El valor del caso es '" + value
-                            + "' y no se puede comparar con '" + discriminant + "'.", "caso");
+                    error(clause.getValue(), "El valor del caso es '" + describe(value, null)
+                            + "' y no se puede comparar con '" + describe(discriminant, null) + "'.",
+                            "caso");
                 }
             }
             clause.accept(this);
@@ -600,7 +736,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     @Override
     public DataType visitReturnStatement(ReturnStatement node)
     {
-        String keyword = keyword("reddere", "retornar");
+        String keyword = keyword("reddere", "retornar", "return");
 
         if (currentFunction == null)
         {
@@ -612,7 +748,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         {
             if (currentFunction.returnsValue())
             {
-                error(node, "La funcion '" + currentFunction.getName() + "' debe retornar '"
+                error(node, functionWord(currentFunction, true) + " '" + currentFunction.getName() + "' debe retornar '"
                         + currentFunction.getReturnTypeText() + "'.", keyword);
             }
             return DataType.VOID;
@@ -625,8 +761,8 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
         if (!currentFunction.returnsValue())
         {
-            error(node, "La funcion '" + currentFunction.getName() + "' "
-                    + keyword("fue declarada con 'actio'", "no declara '-> tipo'")
+            error(node, functionWord(currentFunction, true) + " '" + currentFunction.getName() + "' "
+                    + keyword("fue declarada con 'actio'", "no declara '-> tipo'", "es 'void'")
                     + " y no puede retornar un valor.", keyword);
         }
         else if (!assignable(currentFunction.getReturnType(), expectedStruct, returnedType,
@@ -634,7 +770,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         {
             error(node, "Se retorna '"
                     + describe(returnedType, node.getValue().getStructName())
-                    + "' pero la funcion '" + currentFunction.getName() + "' declara '"
+                    + "' pero " + functionWord(currentFunction, false) + " '" + currentFunction.getName() + "' declara '"
                     + currentFunction.getReturnTypeText() + "'.", keyword);
         }
         return returnedType;
@@ -645,9 +781,9 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     {
         if (loopDepth == 0 && switchDepth == 0)
         {
-            String keyword = keyword("interrumpe", "romper");
+            String keyword = keyword("interrumpe", "romper", "break");
             error(node, "'" + keyword + "' solo puede usarse dentro de un ciclo"
-                    + keyword("", " o un elegir") + ".", keyword);
+                    + keyword("", " o un elegir", " o un switch") + ".", keyword);
         }
         return DataType.VOID;
     }
@@ -657,7 +793,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     {
         if (loopDepth == 0)
         {
-            String keyword = keyword("perge", "continuar");
+            String keyword = keyword("perge", "continuar", "continue");
             error(node, "'" + keyword + "' solo puede usarse dentro de un ciclo.", keyword);
         }
         return DataType.VOID;
@@ -666,7 +802,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     @Override
     public DataType visitPrintStatement(PrintStatement node)
     {
-        String keyword = keyword(">>", "imprimir");
+        String keyword = keyword(">>", "imprimir", "print");
 
         for (Expression value : node.getValues())
         {
@@ -674,8 +810,8 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
             if (type == DataType.ESTRUCTURA)
             {
-                error(value, "No se puede imprimir una structura completa; imprima sus atributos.",
-                        keyword);
+                error(value, "No se puede imprimir una structura u objeto completo; imprima sus "
+                        + "atributos.", keyword);
             }
             else if (type == DataType.VOID)
             {
@@ -735,9 +871,9 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
         if (TypeSystem.incrementResult(type) == DataType.ERROR && type != DataType.ERROR)
         {
-            error(node, "El operador '" + node.getOperator()
-                    + "' solo aplica a numerus o decimalis, no a '" + type + "'.",
-                    node.getOperator());
+            error(node, "El operador '" + node.getOperator() + "' solo aplica a "
+                    + describe(DataType.NUMERUS, null) + " o " + describe(DataType.DECIMALIS, null)
+                    + ", no a '" + describe(type, null) + "'.", node.getOperator());
         }
         return type;
     }
@@ -754,7 +890,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
         DataType result = switch (operator)
         {
-            case "+", "-", "*", "/"               -> TypeSystem.arithmeticResult(left, right, operator);
+            case "+", "-", "*", "/", "%"          -> TypeSystem.arithmeticResult(left, right, operator);
             case "==", "!=", "<", ">", "<=", ">=" -> TypeSystem.relationalResult(left, right, operator);
             case "&&", "||"                       -> TypeSystem.logicalResult(left, right);
             default                               -> DataType.ERROR;
@@ -788,7 +924,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         if (result == DataType.ERROR && operand != DataType.ERROR)
         {
             error(node, "El operador '" + node.getOperator() + "' no puede aplicarse a '"
-                    + operand + "'.", node.getOperator());
+                    + describe(operand, null) + "'.", node.getOperator());
         }
         return typeCheck(node, result);
     }
@@ -801,9 +937,9 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
         if (result == DataType.ERROR && operand != DataType.ERROR)
         {
-            error(node, "El operador '" + node.getOperator()
-                    + "' solo aplica a numerus o decimalis, no a '" + operand + "'.",
-                    node.getOperator());
+            error(node, "El operador '" + node.getOperator() + "' solo aplica a "
+                    + describe(DataType.NUMERUS, null) + " o " + describe(DataType.DECIMALIS, null)
+                    + ", no a '" + describe(operand, null) + "'.", node.getOperator());
         }
         return typeCheck(node, result);
     }
@@ -829,10 +965,10 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
                             + node.getName() + "(...)'.", node.getName());
             return typeCheck(node, DataType.ERROR);
         }
-        if (symbol instanceof StructSymbol)
+        if (symbol instanceof StructSymbol struct)
         {
-            error(node, "'" + node.getName() + "' es una structura, no una variable.",
-                    node.getName());
+            error(node, "'" + node.getName() + "' es una " + (struct.isClass() ? "clase" : "structura")
+                    + ", no una variable.", node.getName());
             return typeCheck(node, DataType.ERROR);
         }
 
@@ -851,49 +987,94 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         return typeCheck(node, symbol.getType());
     }
 
+    /**
+     * m[i][j] is ONE access to a flattened matrix: the chain of indices is
+     * walked down to the array it indexes, and each index is checked against
+     * its own dimension. m[i] alone is not an element.
+     */
     @Override
     public DataType visitArrayAccessExpression(ArrayAccessExpression node)
     {
-        DataType indexType = node.getIndex().accept(this);
+        List<ArrayAccessExpression> chain = new ArrayList<>();
+        Expression                  base  = node;
 
-        if (indexType != DataType.NUMERUS && indexType != DataType.ERROR)
+        while (base instanceof ArrayAccessExpression access)
         {
-            error(node, "El indice de un arreglo debe ser 'numerus', se recibio '"
-                    + indexType + "'.", "[]");
+            chain.add(0, access);
+            base = access.getArray();
+        }
+        for (ArrayAccessExpression access : chain)
+        {
+            DataType indexType = access.getIndex().accept(this);
+
+            if (indexType != DataType.NUMERUS && indexType != DataType.ERROR)
+            {
+                error(access, "El indice de un arreglo debe ser '" + describe(DataType.NUMERUS, null)
+                        + "', se recibio '" + describe(indexType, null) + "'.", "[]");
+            }
         }
 
-        DataType elementType = node.getArray().accept(this);
+        DataType elementType = base.accept(this);
+        String   name        = nameOf(base);
 
         // El nombre de la structura sobrevive al indice: sin eso no se resuelve
         // una cadena como mi_selva.animales[1].nombre.
-        node.setStructName(node.getArray().getStructName());
+        for (ArrayAccessExpression access : chain)
+        {
+            access.setStructName(base.getStructName());
+            typeCheck(access, DataType.ERROR);
+        }
 
         if (elementType == DataType.ERROR)
         {
-            return typeCheck(node, DataType.ERROR);
+            return DataType.ERROR;
         }
-        if (!isArrayValue(node.getArray()))
+        if (!isArrayValue(base))
         {
-            error(node, "'" + nameOf(node.getArray()) + "' no es un arreglo.", nameOf(node.getArray()));
-            return typeCheck(node, DataType.ERROR);
+            error(node, "'" + name + "' no es un arreglo.", name);
+            return DataType.ERROR;
         }
-        if (node.getArray() instanceof IdentifierExpression identifier
-                && identifier.getSymbol() instanceof ArraySymbol array)
+
+        List<Integer> dimensions = dimensionsOf(base);
+
+        if (chain.size() != dimensions.size())
         {
-            Integer index = extractInteger(node.getIndex());
+            error(node, "'" + name + "' tiene " + dimensions.size() + " dimension(es) y se indexo con "
+                    + chain.size() + " indice(s).", name);
+            return DataType.ERROR;
+        }
+        for (int i = 0; i < chain.size(); i++)
+        {
+            Integer index = extractInteger(chain.get(i).getIndex());
+            int     size  = dimensions.get(i);
 
             if (index != null && index < 0)
             {
                 error(node, "Indice fuera de rango: las posiciones de un arreglo "
                         + "empiezan en 0.", "[]");
             }
-            else if (index != null && array.getSize() >= 0 && index >= array.getSize())
+            else if (index != null && size >= 0 && index >= size)
             {
-                error(node, "Indice fuera de rango: el arreglo '" + array.getName()
-                        + "' tiene " + array.getSize() + " posiciones.", "[]");
+                error(node, "Indice fuera de rango: el arreglo '" + name + "' tiene " + size
+                        + " posiciones" + (dimensions.size() > 1 ? " en la dimension " + (i + 1) : "")
+                        + ".", "[]");
             }
         }
-        return typeCheck(node, elementType);
+        for (ArrayAccessExpression access : chain)
+        {
+            typeCheck(access, elementType);
+        }
+        return elementType;
+    }
+
+    /** Sizes of an array value: those of its declaration, or one unknown for a parameter or attribute. */
+    private static List<Integer> dimensionsOf(Expression array)
+    {
+        if (array instanceof IdentifierExpression identifier && identifier.getSymbol() instanceof ArraySymbol symbol)
+        {
+            return symbol.getDimensions();
+        }
+        return List.of(-1);
     }
 
     @Override
@@ -927,8 +1108,9 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
         if (struct == null || !struct.hasAttribute(node.getMemberName()))
         {
-            error(node, "La structura '" + structName + "' no tiene el atributo '"
-                    + node.getMemberName() + "'.", node.getMemberName());
+            error(node, (struct != null && struct.isClass() ? "La clase '" : "La structura '")
+                    + structName + "' no tiene el atributo '" + node.getMemberName() + "'.",
+                    node.getMemberName());
             return typeCheck(node, DataType.ERROR);
         }
 
@@ -946,19 +1128,43 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     @Override
     public DataType visitFunctionCallExpression(FunctionCallExpression node)
     {
-        List<FunctionSymbol> overloads = symbolTable.lookupFunctions(node.getName());
-        List<Expression>     arguments = node.getArguments();
-        List<DataType>       types     = new ArrayList<>();
+        // Inside a class a bare call reaches its own methods first, as in Java.
+        List<FunctionSymbol> methods   = currentClass == null ? List.of()
+                                         : methodsOf(currentClass.getName(), node.getName());
+        List<FunctionSymbol> overloads = methods.isEmpty() ? symbolTable.lookupFunctions(node.getName())
+                                         : methods;
+
+        if (overloads.isEmpty())
+        {
+            visitArguments(node.getArguments());
+            error(node, "La funcion '" + node.getName() + "' no ha sido declarada.", node.getName());
+            return typeCheck(node, DataType.ERROR);
+        }
+
+        FunctionSymbol function = resolve(node, methods.isEmpty() ? "La funcion" : "El metodo",
+                node.getName(), overloads, node.getArguments());
+
+        return typed(node, function);
+    }
+
+    /**
+     * Resolucion de sobrecarga, la misma para funciones, metodos y
+     * constructores: los argumentos se visitan UNA vez (un literal { } espera
+     * al parametro elegido, que es quien le da su tipo), luego se eligen los
+     * candidatos por aridad y, si queda mas de uno, por compatibilidad.
+     *
+     * @return the chosen overload, or null once the reason was reported. A
+     *         single overload with the wrong arity is still returned, so the
+     *         call keeps its type and does not cascade.
+     */
+    private FunctionSymbol resolve(Expression node, String kind, String name,
+                                   List<FunctionSymbol> overloads, List<Expression> arguments)
+    {
+        List<DataType> types = new ArrayList<>();
 
         for (Expression argument : arguments)
         {
             types.add(argument instanceof CompositeLiteralExpression ? null : argument.accept(this));
-        }
-
-        if (overloads.isEmpty())
-        {
-            error(node, "La funcion '" + node.getName() + "' no ha sido declarada.", node.getName());
-            return typeCheck(node, DataType.ERROR);
         }
 
         List<FunctionSymbol> candidates = overloads.stream()
@@ -971,15 +1177,14 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
             {
                 FunctionSymbol function = overloads.get(0);
 
-                error(node, "La funcion '" + function.getSignature() + "' espera "
+                error(node, kind + " '" + function.getSignature() + "' espera "
                         + function.getParameterCount() + " argumento(s) y recibio "
-                        + arguments.size() + ".", node.getName());
-                node.setStructName(function.getReturnStructName());
-                return typeCheck(node, function.getType());
+                        + arguments.size() + ".", name);
+                return function;
             }
-            error(node, "Ninguna version de '" + node.getName() + "' recibe " + arguments.size()
-                    + " argumento(s). Versiones: " + signatures(overloads) + ".", node.getName());
-            return typeCheck(node, DataType.ERROR);
+            error(node, "Ninguna version de '" + name + "' recibe " + arguments.size()
+                    + " argumento(s). Versiones: " + signatures(overloads) + ".", name);
+            return null;
         }
 
         FunctionSymbol function = candidates.size() == 1
@@ -988,11 +1193,10 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
         if (function == null)
         {
-            error(node, "Ninguna version de '" + node.getName() + "' acepta esos argumentos. "
-                    + "Versiones: " + signatures(overloads) + ".", node.getName());
-            return typeCheck(node, DataType.ERROR);
+            error(node, "Ninguna version de '" + name + "' acepta esos argumentos. "
+                    + "Versiones: " + signatures(overloads) + ".", name);
+            return null;
         }
-        node.setFunction(function);
 
         for (int i = 0; i < arguments.size(); i++)
         {
@@ -1005,14 +1209,39 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
             if (!assignable(parameter.getType(), parameter.getStructName(), argumentType,
                             argument.getStructName()))
             {
-                error(argument, "El argumento " + (i + 1) + " de '" + node.getName()
+                error(argument, "El argumento " + (i + 1) + " de '" + name
                         + "' debe ser '" + parameter.getTypeText() + "' y es '"
-                        + describe(argumentType, argument.getStructName()) + "'.", node.getName());
+                        + describe(argumentType, argument.getStructName()) + "'.", name);
             }
         }
+        return function;
+    }
 
+    /** The type of a call is the return type of the overload it resolved to. */
+    private DataType typed(Expression node, FunctionSymbol function)
+    {
+        if (function == null)
+        {
+            return typeCheck(node, DataType.ERROR);
+        }
+        if (node instanceof FunctionCallExpression call)
+        {
+            call.setFunction(function);
+        }
+        else if (node instanceof MethodCallExpression call)
+        {
+            call.setFunction(function);
+        }
         node.setStructName(function.getReturnStructName());
         return typeCheck(node, function.getType());
+    }
+
+    /** The methods of a class with that name; its constructors are not among them. */
+    private List<FunctionSymbol> methodsOf(String className, String methodName)
+    {
+        return symbolTable.lookupFunctions(className + "." + methodName).stream()
+                .filter(function -> !function.isConstructor())
+                .toList();
     }
 
     /** Null when no candidate accepts every argument. */
@@ -1064,30 +1293,112 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         return overloads.stream().map(FunctionSymbol::getSignature).collect(Collectors.joining(", "));
     }
 
-    /** Objects arrive with Zetariano: until a .z class exists, no expression has methods. */
+    /** Only an object has methods: an instance of a class imported from a .z file. */
     @Override
     public DataType visitMethodCallExpression(MethodCallExpression node)
     {
-        DataType owner = node.getOwner().accept(this);
+        Expression   owner     = node.getOwner();
+        DataType     ownerType = owner.accept(this);
+        StructSymbol type      = ownerType == DataType.ESTRUCTURA && !isArrayValue(owner)
+                                 ? symbolTable.lookupStruct(owner.getStructName()) : null;
 
-        visitArguments(node.getArguments());
-
-        if (owner != DataType.ERROR)
+        if (type == null || !type.isClass())
         {
-            error(node, "El metodo '" + node.getMethodName() + "()' no existe: solo los objetos, "
-                    + "cuyas clases se importan de un archivo .z, tienen metodos.",
-                    node.getMethodName());
+            visitArguments(node.getArguments());
+
+            if (ownerType != DataType.ERROR)
+            {
+                error(node, "El metodo '" + node.getMethodName() + "()' no existe: solo los objetos, "
+                        + "cuyas clases se importan de un archivo .z, tienen metodos.",
+                        node.getMethodName());
+            }
+            return typeCheck(node, DataType.ERROR);
         }
-        return typeCheck(node, DataType.ERROR);
+
+        List<FunctionSymbol> overloads = methodsOf(type.getName(), node.getMethodName());
+
+        if (overloads.isEmpty())
+        {
+            visitArguments(node.getArguments());
+            error(node, "La clase '" + type.getName() + "' no tiene el metodo '"
+                    + node.getMethodName() + "()'.", node.getMethodName());
+            return typeCheck(node, DataType.ERROR);
+        }
+        return typed(node, resolve(node, "El metodo", node.getMethodName(), overloads,
+                node.getArguments()));
     }
 
+    /** novus / new: the constructor is chosen among the overloads, like any call. */
     @Override
     public DataType visitNewExpression(NewExpression node)
     {
-        visitArguments(node.getArguments());
+        StructSymbol type = symbolTable.lookupStruct(node.getClassName());
 
-        error(node, "La clase '" + node.getClassName() + "' no existe: los objetos se crean con "
-                + "clases importadas de un archivo .z.", node.getClassName());
+        if (type == null || !type.isClass())
+        {
+            visitArguments(node.getArguments());
+            error(node, "La clase '" + node.getClassName() + "' no existe: los objetos se crean con "
+                    + "clases importadas de un archivo .z.", node.getClassName());
+            return typeCheck(node, DataType.ERROR);
+        }
+
+        FunctionSymbol constructor = resolve(node, "El constructor", node.getClassName(),
+                symbolTable.lookupFunctions(type.getName() + "." + type.getName()), node.getArguments());
+
+        if (constructor == null)
+        {
+            return typeCheck(node, DataType.ERROR);
+        }
+        node.setConstructor(constructor);
+        node.setStructName(type.getName());
+        return typeCheck(node, DataType.ESTRUCTURA);
+    }
+
+    /** Written by the user, 'this' belongs to Proyecto 2; the builder's own is always valid. */
+    @Override
+    public DataType visitThisExpression(ThisExpression node)
+    {
+        if (currentClass == null)
+        {
+            error(node, "'this' solo existe dentro de los metodos de una clase.", "this");
+            return typeCheck(node, DataType.ERROR);
+        }
+        if (!node.isImplicit())
+        {
+            error(node, "El uso de 'this' se contempla en el Proyecto 2: quite 'this.' y use el "
+                    + "atributo por su nombre.", "this");
+        }
+        node.setStructName(currentClass.getName());
+        return typeCheck(node, DataType.ESTRUCTURA);
+    }
+
+    /** The wider branch gives the type: c ? 1 : 2.5 is decimal, and null fits an object. */
+    @Override
+    public DataType visitTernaryExpression(TernaryExpression node)
+    {
+        requireBooleanCondition(node.getCondition(), "?:");
+
+        DataType whenTrue    = operandType(node.getWhenTrue(), "?:");
+        DataType whenFalse   = operandType(node.getWhenFalse(), "?:");
+        String   trueStruct  = node.getWhenTrue().getStructName();
+        String   falseStruct = node.getWhenFalse().getStructName();
+
+        if (whenTrue == DataType.ERROR || whenFalse == DataType.ERROR)
+        {
+            return typeCheck(node, DataType.ERROR);
+        }
+        if (whenTrue != DataType.NULO && assignable(whenTrue, trueStruct, whenFalse, falseStruct))
+        {
+            node.setStructName(trueStruct);
+            return typeCheck(node, whenTrue);
+        }
+        if (assignable(whenFalse, falseStruct, whenTrue, trueStruct))
+        {
+            node.setStructName(falseStruct);
+            return typeCheck(node, whenFalse);
+        }
+        error(node, "Las ramas del ternario no son compatibles: '" + describe(whenTrue, trueStruct)
+                + "' y '" + describe(whenFalse, falseStruct) + "'.", "?:");
         return typeCheck(node, DataType.ERROR);
     }
 
@@ -1127,7 +1438,18 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     /* =================================================================
      * Registration (pass 1)
      * ================================================================= */
-    private void registerStruct(StructDeclaration node)
+    /** A class is registered as the structure of its attributes plus the signatures of its methods. */
+    private void registerClass(ClassDeclaration node)
+    {
+        registerStruct(node.getLayout(), true);
+
+        for (FunctionDeclaration method : node.getMethods())
+        {
+            registerFunctionSignature(method);
+        }
+    }
+
+    private void registerStruct(StructDeclaration node, boolean classType)
     {
         requireDeclarationPlace(node, node.getName());
 
@@ -1147,7 +1469,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         }
 
         StructSymbol struct = new StructSymbol(node.getName(), symbolTable.getCurrentScopeName(),
-                node.getLine(), node.getColumn());
+                classType, node.getLine(), node.getColumn());
 
         for (StructField field : node.getFields())
         {
@@ -1192,16 +1514,20 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
                     parameter.getLine(), parameter.getColumn()));
         }
 
-        FunctionSymbol function = new FunctionSymbol(node.getName(), node.getReturnType(),
+        // A method is named after its class: Pila.apilar never meets a free apilar.
+        String         name     = node.getOwnerClass() == null ? node.getName()
+                                  : node.getOwnerClass() + "." + node.getName();
+        FunctionSymbol function = new FunctionSymbol(name, node.getReturnType(),
                 node.getReturnTypeText(), symbolTable.getCurrentScopeName(), parameters,
                 node.returnsValue(), structNameOf(node.getReturnType(), node.getReturnTypeText()),
-                node.getLine(), node.getColumn());
+                node.getOwnerClass(), node.isConstructor(), node.getLine(), node.getColumn());
 
         // Sobrecarga permitida: solo choca otra version con los mismos tipos.
         if (!symbolTable.declareFunction(function))
         {
-            error(node, "La funcion '" + function.getSignature()
-                    + "' ya fue declarada con los mismos parametros.", node.getName());
+            error(node, functionWord(node, true) + " '" + function.getSignature()
+                    + (node.getOwnerClass() == null ? "' ya fue declarada" : "' ya fue declarado")
+                    + " con los mismos parametros.", node.getName());
             return;
         }
         node.setSymbol(function);
@@ -1312,8 +1638,8 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
             if (sizeType != DataType.NUMERUS && sizeType != DataType.ERROR)
             {
                 error(access, "El tamano del arreglo '" + attribute.getName()
-                        + "' debe ser 'numerus', se recibio '" + sizeType + "'.",
-                        attribute.getName());
+                        + "' debe ser '" + describe(DataType.NUMERUS, null) + "', se recibio '"
+                        + describe(sizeType, null) + "'.", attribute.getName());
             }
 
             typeName.setComputedType(attribute.getType());
@@ -1413,7 +1739,9 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     {
         if (expression instanceof IdentifierExpression identifier)
         {
-            return identifier.getSymbol() instanceof ArraySymbol;
+            // An array attribute used from inside a method is a VariableSymbol with the flag.
+            return identifier.getSymbol() instanceof ArraySymbol
+                    || identifier.getSymbol() instanceof VariableSymbol variable && variable.isArray();
         }
         if (expression instanceof MemberAccessExpression member)
         {
@@ -1469,7 +1797,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         if (type != DataType.BOOLEANO && type != DataType.ERROR)
         {
             error(condition, "La condicion de '" + statement
-                    + "' debe ser booleana, se recibio '" + type + "'.", statement);
+                    + "' debe ser booleana, se recibio '" + describe(type, null) + "'.", statement);
         }
     }
 
@@ -1503,9 +1831,14 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     }
 
     /** The same statement is spelled differently in each language: the message echoes the user's. */
-    private String keyword(String pig, String y)
+    private String keyword(String pig, String y, String z)
     {
-        return language == Language.Y ? y : pig;
+        return switch (language)
+        {
+            case Y   -> y;
+            case Z   -> z;
+            default  -> pig;
+        };
     }
 
     /**
@@ -1556,11 +1889,45 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         return null;
     }
 
-    /** Como se nombra un tipo en un mensaje: "Carro", no "structura". */
+    /**
+     * Como se nombra un tipo en un mensaje: "Carro", no "structura", y con las
+     * palabras del lenguaje que se esta leyendo: int en un .z, entero en un .y.
+     */
     private String describe(DataType type, String structName)
     {
-        return (type == DataType.ESTRUCTURA && structName != null)
-                ? structName : type.toString();
+        if (type == DataType.ESTRUCTURA && structName != null)
+        {
+            return structName;
+        }
+        return switch (language)
+        {
+            case Y -> switch (type)
+            {
+                case NUMERUS   -> "entero";
+                case DECIMALIS -> "flotante";
+                case TEXTUM    -> "cadena";
+                case LITTERA   -> "caracter";
+                default        -> type.toString();
+            };
+            case Z -> switch (type)
+            {
+                case NUMERUS   -> "int";
+                case DECIMALIS -> "double";
+                case TEXTUM    -> "String";
+                case LITTERA   -> "char";
+                case BOOLEANO  -> "boolean";
+                default        -> type.toString();
+            };
+            default -> type.toString();
+        };
+    }
+
+    /** "La funcion" or "El metodo": a Zetariano message speaks of methods. */
+    private static String functionWord(FunctionDeclaration function, boolean capitalized)
+    {
+        String word = function.getOwnerClass() == null ? "la funcion" : "el metodo";
+
+        return capitalized ? Character.toUpperCase(word.charAt(0)) + word.substring(1) : word;
     }
 
     private String structNameOf(DataType type, String typeText)

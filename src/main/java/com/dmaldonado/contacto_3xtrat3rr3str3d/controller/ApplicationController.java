@@ -2,12 +2,20 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.controller;
 
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.CompilerPipeline;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.CompilerPipeline.CompilationResult;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstNode;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.errors.CompilerError;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.util.Constants;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.util.FileManager;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.view.AstTreeBuilder;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.view.EditorTab;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.view.MainView;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import javafx.scene.control.TableRow;
+import javafx.scene.control.TreeItem;
 import javafx.stage.Stage;
 import org.fxmisc.richtext.CodeArea;
 
@@ -20,12 +28,18 @@ import org.fxmisc.richtext.CodeArea;
  */
 public class ApplicationController
 {
+    private static final Logger LOGGER = Logger.getLogger(ApplicationController.class.getName());
+
     private final MainView         view;
     private final Stage            stage;
     private final CompilerPipeline compiler = new CompilerPipeline();
     private final FileController   files;
 
     private CompilationResult lastResult;
+    /** The editor lastResult came from: its AST and its errors point into it. */
+    private EditorTab         compiled;
+    /** The open folder; null until the user opens one. */
+    private Path              workspace;
 
     public ApplicationController(MainView view, Stage stage)
     {
@@ -34,18 +48,27 @@ public class ApplicationController
         this.files = new FileController(stage);
 
         registerEvents();
+        view.openEditor(null, "");
         showFileName();
     }
 
     private void registerEvents()
     {
-        view.getCompileButton().setOnAction(event -> compile());
+        view.getOpenFolderButton().setOnAction(event -> openFolder());
         view.getNewButton().setOnAction(event -> newFile());
+        view.getNewFolderButton().setOnAction(event -> newFolder());
         view.getOpenButton().setOnAction(event -> open());
-        view.getSaveButton().setOnAction(event -> save());
+        view.getSaveButton().setOnAction(event -> save(view.getActiveEditor(), false));
+        view.getSaveAsButton().setOnAction(event -> save(view.getActiveEditor(), true));
+        view.getSaveAllButton().setOnAction(event -> saveAll());
+        view.getExportFolderButton().setOnAction(event -> exportFolder());
+        view.getCompileButton().setOnAction(event -> compile());
         view.getExportButton().setOnAction(event -> exportGeneratedC());
+        view.getExportTreeButton().setOnAction(event -> exportTree());
+        view.getEditorTabs().getSelectionModel().selectedItemProperty()
+                .addListener((observable, previous, current) -> showFileName());
 
-        // Doble clic en un error lleva el cursor hasta el.
+        // Doble clic en un error lleva el cursor hasta el, aunque este en un archivo importado.
         view.getErrorTable().setRowFactory(table ->
         {
             TableRow<CompilerError> row = new TableRow<>();
@@ -59,15 +82,57 @@ public class ApplicationController
             });
             return row;
         });
+
+        view.getWorkspaceTree().setOnMouseClicked(event ->
+        {
+            TreeItem<Path> selected = view.getWorkspaceTree().getSelectionModel().getSelectedItem();
+
+            if (event.getClickCount() == 2 && selected != null && Files.isRegularFile(selected.getValue()))
+            {
+                openFile(selected.getValue());
+            }
+        });
+
+        // Doble clic en un nodo del arbol lleva a donde esta escrito.
+        view.getAstTree().setOnMouseClicked(event ->
+        {
+            TreeItem<AstNode> selected = view.getAstTree().getSelectionModel().getSelectedItem();
+
+            if (event.getClickCount() == 2 && selected != null && compiled != null)
+            {
+                moveCaret(compiled, selected.getValue().getLine(), selected.getValue().getColumn());
+            }
+        });
     }
 
     /* ================================================================
      * Compilation
      * ================================================================ */
 
+    /**
+     * Compiles the file the user is looking at. The imports are read from
+     * disk, so the other open files are saved first: what the tabs show is
+     * what gets compiled.
+     */
     private void compile()
     {
-        lastResult = compiler.compile(view.getCodeArea().getText(), files.getCurrentPath());
+        EditorTab editor = view.getActiveEditor();
+
+        if (editor == null)
+        {
+            view.setStatus("Abra o cree un archivo para compilar.", false);
+            return;
+        }
+        for (EditorTab open : view.getEditors())
+        {
+            if (open.isModified() && open.getPath() != null)
+            {
+                save(open, false);
+            }
+        }
+
+        compiled   = editor;
+        lastResult = compiler.compile(editor.getCodeArea().getText(), editor.getPath());
 
         view.showErrors(lastResult.errors());
         view.showSymbols(lastResult.symbolTable().getAllSymbols());
@@ -78,7 +143,7 @@ public class ApplicationController
         view.showQuadruples(lastResult.quadruples());
         view.showGeneratedC(lastResult.cCode());
 
-        // Un .y valido no trae C: no tiene MAIOR que ejecutar.
+        // Un .y o un .z valido no trae C: no tiene MAIOR que ejecutar.
         boolean translated = !lastResult.cCode().isEmpty();
         view.getExportButton().setDisable(!translated);
 
@@ -104,14 +169,57 @@ public class ApplicationController
 
     private void jumpTo(CompilerError error)
     {
-        CodeArea codeArea = view.getCodeArea();
+        EditorTab editor = editorOf(error.getSource());
 
-        // Un error de un archivo importado no esta en este editor: se avisa donde esta.
-        if (!error.getSource().isEmpty() && !error.getSource().equals(files.getCurrentFileName()))
+        if (editor == null)
         {
-            view.setStatus("El error esta en el archivo importado " + error.getSource());
+            view.setStatus("No se encontro el archivo " + error.getSource() + " para mostrar el error.");
             return;
         }
+        moveCaret(editor, error.getLine(), error.getColumn());
+    }
+
+    /**
+     * The tab of the file an error names: the compiled one, one already open,
+     * or an import found on disk under the compiled file's folder, which gets
+     * opened. The error only carries the file name.
+     */
+    private EditorTab editorOf(String fileName)
+    {
+        if (compiled == null || fileName.isEmpty() || fileName.equals(compiled.getFileName()))
+        {
+            return compiled;
+        }
+        for (EditorTab editor : view.getEditors())
+        {
+            if (editor.getFileName().equals(fileName))
+            {
+                return editor;
+            }
+        }
+        if (compiled.getPath() == null)
+        {
+            return null;
+        }
+        try
+        {
+            Path file = FileManager.find(compiled.getPath().toAbsolutePath().getParent(), fileName);
+
+            return file == null ? null : openFile(file);
+        }
+        catch (IOException exception)
+        {
+            LOGGER.log(Level.SEVERE, "No se pudo buscar el archivo " + fileName, exception);
+            return null;
+        }
+    }
+
+    private void moveCaret(EditorTab editor, int line, int column)
+    {
+        CodeArea codeArea = editor.getCodeArea();
+
+        view.getEditorTabs().getSelectionModel().select(editor);
+
         if (codeArea.getParagraphs().isEmpty())
         {
             return;
@@ -119,46 +227,160 @@ public class ApplicationController
 
         // El error es 1-based y el editor 0-based, y hay que acotar: un error al
         // final del archivo puede traer una columna mayor al largo de su linea.
-        int paragraph = Math.max(0, Math.min(error.getLine() - 1, codeArea.getParagraphs().size() - 1));
-        int column    = Math.max(0, Math.min(error.getColumn() - 1, codeArea.getParagraphLength(paragraph)));
+        int paragraph = Math.max(0, Math.min(line - 1, codeArea.getParagraphs().size() - 1));
+        int position  = Math.max(0, Math.min(column - 1, codeArea.getParagraphLength(paragraph)));
 
-        codeArea.moveTo(paragraph, column);
+        codeArea.moveTo(paragraph, position);
         codeArea.requestFollowCaret();
         codeArea.requestFocus();
     }
 
     /* ================================================================
-     * Files
+     * Files and folders
      * ================================================================ */
 
+    private void openFolder()
+    {
+        Path folder = files.chooseFolder("Abrir carpeta de trabajo");
+
+        if (folder != null)
+        {
+            workspace = folder.toAbsolutePath().normalize();
+            refreshWorkspace();
+            view.setStatus("Carpeta de trabajo: " + workspace);
+        }
+    }
+
+    /** Without a folder it is an untitled tab; with one, a file created where the tree points. */
     private void newFile()
     {
-        files.newFile();
-        view.getCodeArea().clear();
-        view.setStatus("Nuevo archivo");
-        showFileName();
+        if (workspace == null)
+        {
+            view.openEditor(null, "");
+            view.setStatus("Nuevo archivo");
+            return;
+        }
+
+        Path created = files.newFile(selectedFolder());
+
+        if (created != null)
+        {
+            refreshWorkspace();
+            openFile(created);
+        }
+    }
+
+    private void newFolder()
+    {
+        if (workspace == null)
+        {
+            view.setStatus("Abra primero una carpeta de trabajo.", false);
+            return;
+        }
+        if (files.newFolder(selectedFolder()) != null)
+        {
+            refreshWorkspace();
+        }
+    }
+
+    /** The folder selected in the tree, the folder of the selected file, or the workspace itself. */
+    private Path selectedFolder()
+    {
+        TreeItem<Path> selected = view.getWorkspaceTree().getSelectionModel().getSelectedItem();
+
+        if (selected == null)
+        {
+            return workspace;
+        }
+        return Files.isDirectory(selected.getValue()) ? selected.getValue() : selected.getValue().getParent();
     }
 
     private void open()
     {
-        String content = files.open();
+        Path chosen = files.chooseFile();
 
-        if (content != null)
+        if (chosen != null && openFile(chosen) != null)
         {
-            view.getCodeArea().replaceText(content);
-            showFileName();
             compile();
         }
     }
 
-    private void save()
+    /** Selects the file's tab, opening it first when it is not open yet. */
+    private EditorTab openFile(Path path)
     {
-        Path saved = files.save(view.getCodeArea().getText());
+        Path file = path.toAbsolutePath().normalize();
 
-        if (saved != null)
+        for (EditorTab editor : view.getEditors())
         {
-            showFileName();
-            view.setStatus("Guardado en " + saved.toAbsolutePath());
+            if (file.equals(editor.getPath()))
+            {
+                view.getEditorTabs().getSelectionModel().select(editor);
+                return editor;
+            }
+        }
+
+        String content = files.read(file);
+
+        return content == null ? null : view.openEditor(file, content);
+    }
+
+    /**
+     * "Guardar como" is also how a single file is downloaded. A file that gets
+     * a new name is reopened: its tab colors by the extension it now has.
+     */
+    private void save(EditorTab editor, boolean asNewFile)
+    {
+        if (editor == null)
+        {
+            return;
+        }
+
+        boolean renamed = asNewFile || editor.getPath() == null;
+        Path    saved   = renamed ? files.saveAs(editor) : files.save(editor);
+
+        if (saved == null)
+        {
+            return;
+        }
+        if (renamed)
+        {
+            String content = editor.getCodeArea().getText();
+
+            view.getEditorTabs().getTabs().remove(editor);
+            view.openEditor(saved.toAbsolutePath().normalize(), content);
+        }
+        else
+        {
+            editor.savedAs(saved);
+        }
+        refreshWorkspace();
+        view.setStatus("Guardado en " + saved.toAbsolutePath());
+    }
+
+    private void saveAll()
+    {
+        for (EditorTab editor : view.getEditors())
+        {
+            if (editor.isModified())
+            {
+                save(editor, false);
+            }
+        }
+    }
+
+    private void exportFolder()
+    {
+        if (workspace == null)
+        {
+            view.setStatus("Abra primero una carpeta de trabajo.", false);
+            return;
+        }
+
+        Path copy = files.exportFolder(workspace);
+
+        if (copy != null)
+        {
+            view.setStatus("Carpeta descargada en " + copy);
         }
     }
 
@@ -169,17 +391,69 @@ public class ApplicationController
             return;
         }
 
-        Path saved = files.saveGeneratedC(view.getGeneratedCText());   // lo que el usuario ve
+        // lo que el usuario ve, junto al archivo que lo produjo
+        Path saved = files.saveGeneratedC(compiled.getPath(), view.getGeneratedCText());
 
         if (saved != null)
         {
+            refreshWorkspace();
             view.setStatus("Codigo C descargado en " + saved.toAbsolutePath());
         }
     }
 
+    private void exportTree()
+    {
+        if (lastResult == null || !lastResult.isValid())
+        {
+            return;
+        }
+
+        Path saved = files.saveText("Exportar arbol", AstTreeBuilder.toText(lastResult.ast()));
+
+        if (saved != null)
+        {
+            view.setStatus("Arbol exportado en " + saved.toAbsolutePath());
+        }
+    }
+
+    private void refreshWorkspace()
+    {
+        if (workspace == null)
+        {
+            return;
+        }
+
+        TreeItem<Path> root = treeOf(workspace);
+
+        root.setExpanded(true);
+        view.showWorkspace(root);
+    }
+
+    private static TreeItem<Path> treeOf(Path path)
+    {
+        TreeItem<Path> item = new TreeItem<>(path);
+
+        if (Files.isDirectory(path))
+        {
+            try
+            {
+                for (Path child : FileManager.list(path))
+                {
+                    item.getChildren().add(treeOf(child));
+                }
+            }
+            catch (IOException exception)
+            {
+                LOGGER.log(Level.SEVERE, "No se pudo leer la carpeta " + path, exception);
+            }
+        }
+        return item;
+    }
+
     private void showFileName()
     {
-        String name = files.getCurrentFileName();
+        EditorTab editor = view.getActiveEditor();
+        String    name   = editor == null ? "Sin archivo" : editor.getFileName();
 
         view.setFileName(name);
         stage.setTitle(Constants.APP_TITLE + "  -  " + name);

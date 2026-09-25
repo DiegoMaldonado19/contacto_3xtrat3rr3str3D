@@ -2,6 +2,7 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.controller;
 
 import com.dmaldonado.contacto_3xtrat3rr3str3d.util.Constants;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.util.FileManager;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.view.EditorTab;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -10,129 +11,190 @@ import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javafx.scene.control.Alert;
+import javafx.scene.control.TextInputDialog;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
 
 /**
- * The three verbs the statement asks for: abrir, guardar and descargar.
+ * The verbs the statement asks for, over files AND folders: abrir, guardar y
+ * descargar. It talks to the user through dialogs; the disk itself is
+ * FileManager's.
  *
- * It remembers the current path, so "Guardar" reuses it and only the first save
- * of a brand new file opens a dialog. The generated C is written next to its
- * source with the same base name and the .c extension.
+ * Every method returns null when the user cancels or the disk fails; a
+ * failure is also shown, because that is the case the user must not miss.
  */
 public class FileController
 {
     private static final Logger LOGGER = Logger.getLogger(FileController.class.getName());
 
+    private static final String SOURCES = "Archivos fuente (*.pig, *.y, *.z)";
+
     private final Window owner;
-    private Path         currentPath;
+    /** Where the last dialog was left, so the next one opens there. */
+    private Path         lastFolder;
 
     public FileController(Window owner)
     {
         this.owner = owner;
     }
 
-    public void newFile()
+    public Path chooseFile()
     {
-        currentPath = null;
+        return remember(toPath(chooser("Abrir archivo fuente", SOURCES, Constants.SOURCE_EXTENSIONS)
+                .showOpenDialog(owner)));
     }
 
-    public String getCurrentFileName()
+    public Path chooseFolder(String title)
     {
-        return currentPath == null ? "Sin archivo" : currentPath.getFileName().toString();
+        DirectoryChooser chooser = new DirectoryChooser();
+
+        chooser.setTitle(title);
+        if (lastFolder != null && Files.isDirectory(lastFolder))
+        {
+            chooser.setInitialDirectory(lastFolder.toFile());
+        }
+        return remember(toPath(chooser.showDialog(owner)));
     }
 
-    /** Null for a file that was never saved: the compiler needs it to resolve imports. */
-    public Path getCurrentPath()
-    {
-        return currentPath;
-    }
-
-    /** @return the content of the opened file, or null when it was cancelled. */
-    public String open()
-    {
-        File selected = createChooser("Abrir archivo fuente",
-                "Archivos fuente (*.pig, *.y, *.z)", Constants.SOURCE_EXTENSIONS)
-                .showOpenDialog(owner);
-
-        if (selected == null)
-        {
-            return null;
-        }
-
-        try
-        {
-            currentPath = selected.toPath();
-            return FileManager.read(currentPath);
-        }
-        catch (IOException exception)
-        {
-            currentPath = null;   // it was never really opened
-            report("No se pudo abrir el archivo", selected.toPath(), exception);
-            return null;
-        }
-    }
-
-    /** @return where it was written, or null if it was cancelled or failed. */
-    public Path save(String content)
-    {
-        if (currentPath == null)
-        {
-            return saveAs(content, Constants.MAIN_EXTENSION, "Archivos fuente (*.pig, *.y, *.z)");
-        }
-        return write(currentPath, content);
-    }
-
-    public Path saveAs(String content, String extension, String description)
-    {
-        File selected = createChooser("Guardar archivo", description, List.of(extension))
-                .showSaveDialog(owner);
-
-        if (selected == null)
-        {
-            return null;
-        }
-
-        Path destination = FileManager.ensureExtension(selected.toPath(), extension);
-
-        if (Constants.SOURCE_EXTENSIONS.contains(extension))
-        {
-            currentPath = destination;
-        }
-        return write(destination, content);
-    }
-
-    /** Downloads the generated C next to the source, with the same base name. */
-    public Path saveGeneratedC(String content)
-    {
-        if (currentPath != null)
-        {
-            return write(FileManager.outputPathFor(currentPath), content);
-        }
-        return saveAs(content, Constants.OUTPUT_EXTENSION, "Codigo C (*.c)");
-    }
-
-    /**
-     * A successful save reports through the status bar, not through a dialog:
-     * a modal window on every save is one extra click every time, and while it
-     * is open the main window cannot even be closed. A failure DOES open one,
-     * because that is the case the user must not miss.
-     */
-    private Path write(Path path, String content)
+    /** @return the content, or null when it could not be read. */
+    public String read(Path path)
     {
         try
         {
-            FileManager.write(path, content);
-            return path;
+            return FileManager.read(path);
         }
         catch (IOException exception)
         {
-            report("No se pudo guardar el archivo", path, exception);
+            report("No se pudo abrir el archivo", path, exception);
             return null;
         }
     }
 
-    private FileChooser createChooser(String title, String description, List<String> extensions)
+    /** A file never saved asks where to go; the rest go back where they came from. */
+    public Path save(EditorTab editor)
+    {
+        if (editor.getPath() == null)
+        {
+            return saveAs(editor);
+        }
+        return write(editor.getPath(), editor.getCodeArea().getText()) ? editor.getPath() : null;
+    }
+
+    /** Also how a single file is "descargado": a copy wherever the user wants it. */
+    public Path saveAs(EditorTab editor)
+    {
+        Path destination = chooseDestination("Guardar archivo como", SOURCES, Constants.SOURCE_EXTENSIONS,
+                editor.getPath() == null ? Constants.MAIN_EXTENSION
+                        : FileManager.extensionOf(editor.getPath().getFileName().toString()));
+
+        return destination != null && write(destination, editor.getCodeArea().getText()) ? destination : null;
+    }
+
+    /** Downloads the generated C next to its source, with the same base name. */
+    public Path saveGeneratedC(Path source, String content)
+    {
+        Path destination = source != null ? FileManager.outputPathFor(source)
+                : chooseDestination("Guardar codigo C", "Codigo C (*.c)", List.of(Constants.OUTPUT_EXTENSION),
+                        Constants.OUTPUT_EXTENSION);
+
+        return destination != null && write(destination, content) ? destination : null;
+    }
+
+    public Path saveText(String title, String content)
+    {
+        Path destination = chooseDestination(title, "Texto (*.txt)", List.of("txt"), "txt");
+
+        return destination != null && write(destination, content) ? destination : null;
+    }
+
+    /** A new empty file inside the folder, named by the user. */
+    public Path newFile(Path folder)
+    {
+        String name = askName("Nuevo archivo", "Nombre del archivo (.pig, .y o .z):", "nuevo.pig");
+
+        if (name == null)
+        {
+            return null;
+        }
+
+        Path file = folder.resolve(name);
+
+        if (Files.exists(file))
+        {
+            report("Ya existe", file, new IOException(file.getFileName() + " ya existe en la carpeta."));
+            return null;
+        }
+        return write(file, "") ? file : null;
+    }
+
+    public Path newFolder(Path parent)
+    {
+        String name = askName("Nueva carpeta", "Nombre de la carpeta:", "carpeta");
+
+        if (name == null)
+        {
+            return null;
+        }
+
+        Path folder = parent.resolve(name);
+
+        try
+        {
+            return Files.createDirectories(folder);
+        }
+        catch (IOException exception)
+        {
+            report("No se pudo crear la carpeta", folder, exception);
+            return null;
+        }
+    }
+
+    /** "Descargar" the workspace: a full copy inside the folder the user picks. */
+    public Path exportFolder(Path workspace)
+    {
+        Path destination = chooseFolder("Descargar carpeta en...");
+
+        if (destination == null)
+        {
+            return null;
+        }
+
+        Path copy = destination.resolve(workspace.getFileName().toString());
+
+        try
+        {
+            FileManager.copyFolder(workspace, copy);
+            return copy;
+        }
+        catch (IOException exception)
+        {
+            report("No se pudo copiar la carpeta", copy, exception);
+            return null;
+        }
+    }
+
+    private String askName(String title, String prompt, String suggestion)
+    {
+        TextInputDialog dialog = new TextInputDialog(suggestion);
+
+        dialog.initOwner(owner);
+        dialog.setTitle(title);
+        dialog.setHeaderText(null);
+        dialog.setContentText(prompt);
+
+        return dialog.showAndWait().map(String::trim).filter(name -> !name.isEmpty()).orElse(null);
+    }
+
+    private Path chooseDestination(String title, String description, List<String> extensions,
+                                   String extension)
+    {
+        Path selected = toPath(chooser(title, description, extensions).showSaveDialog(owner));
+
+        return selected == null ? null : remember(FileManager.ensureExtension(selected, extension));
+    }
+
+    private FileChooser chooser(String title, String description, List<String> extensions)
     {
         FileChooser chooser = new FileChooser();
 
@@ -142,12 +204,44 @@ public class FileController
 
         // FileChooser throws if the initial directory no longer exists, which is
         // exactly what happens when the last file was opened from a removed USB.
-        if (currentPath != null && currentPath.getParent() != null
-                && Files.isDirectory(currentPath.getParent()))
+        if (lastFolder != null && Files.isDirectory(lastFolder))
         {
-            chooser.setInitialDirectory(currentPath.getParent().toFile());
+            chooser.setInitialDirectory(lastFolder.toFile());
         }
         return chooser;
+    }
+
+    private Path remember(Path chosen)
+    {
+        if (chosen != null)
+        {
+            lastFolder = Files.isDirectory(chosen) ? chosen : chosen.getParent();
+        }
+        return chosen;
+    }
+
+    private static Path toPath(File file)
+    {
+        return file == null ? null : file.toPath();
+    }
+
+    /**
+     * A successful save reports through the status bar, not through a dialog:
+     * a modal window on every save is one extra click every time. A failure
+     * DOES open one.
+     */
+    private boolean write(Path path, String content)
+    {
+        try
+        {
+            FileManager.write(path, content);
+            return true;
+        }
+        catch (IOException exception)
+        {
+            report("No se pudo guardar el archivo", path, exception);
+            return false;
+        }
     }
 
     /**

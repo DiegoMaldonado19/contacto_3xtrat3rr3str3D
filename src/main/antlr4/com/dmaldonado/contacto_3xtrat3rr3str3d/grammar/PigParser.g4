@@ -37,7 +37,7 @@ declaracionVariable
     ;
 
 declaracionArreglo
-    : SERIES ID COR_IZQ expresion COR_DER DOS_PUNTOS tipo?
+    : SERIES ID ( COR_IZQ expresion COR_DER )+ DOS_PUNTOS tipo?
       ( LLAVE_IZQ listaExpresiones? LLAVE_DER )?
       PUNTO_COMA
     ;

@@ -4,6 +4,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.Comparator;
+import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * Pure I/O helpers: no dialogs and no JavaFX.
@@ -41,6 +45,56 @@ public final class FileManager
             return path;
         }
         return path.resolveSibling(name + "." + extension);
+    }
+
+    /** A folder's entries, folders first and then by name, the way a file explorer lists them. */
+    public static List<Path> list(Path folder) throws IOException
+    {
+        try (Stream<Path> entries = Files.list(folder))
+        {
+            return entries.sorted(Comparator.comparing((Path entry) -> !Files.isDirectory(entry))
+                            .thenComparing(entry -> entry.getFileName().toString().toLowerCase()))
+                          .toList();
+        }
+    }
+
+    /** "Descargar" a whole folder: a copy of everything inside it, subfolders included. */
+    public static void copyFolder(Path source, Path target) throws IOException
+    {
+        try (Stream<Path> paths = Files.walk(source))
+        {
+            for (Path path : (Iterable<Path>) paths::iterator)
+            {
+                Path destination = target.resolve(source.relativize(path).toString());
+
+                if (Files.isDirectory(path))
+                {
+                    Files.createDirectories(destination);
+                }
+                else
+                {
+                    Files.copy(path, destination, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+    }
+
+    /** The first file with that name under a folder; null when there is none. */
+    public static Path find(Path folder, String fileName) throws IOException
+    {
+        try (Stream<Path> paths = Files.walk(folder))
+        {
+            return paths.filter(path -> path.getFileName().toString().equals(fileName))
+                        .findFirst()
+                        .orElse(null);
+        }
+    }
+
+    /** "Pila.z" gives "z"; a name without a dot gives "". */
+    public static String extensionOf(String fileName)
+    {
+        int dot = fileName.lastIndexOf('.');
+        return dot < 0 ? "" : fileName.substring(dot + 1).toLowerCase();
     }
 
     /** Swaps the source extension for .c keeping the base name. */

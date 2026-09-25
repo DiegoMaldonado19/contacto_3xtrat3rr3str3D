@@ -38,7 +38,8 @@ public class LiteralExpression extends Expression
     /** The boolean true of any of the languages. */
     public boolean isTrue()
     {
-        return type == DataType.BOOLEANO && ("verum".equals(text) || "verdadero".equals(text));
+        return type == DataType.BOOLEANO
+                && ("verum".equals(text) || "verdadero".equals(text) || "true".equals(text));
     }
 
     @Override

@@ -15,6 +15,8 @@ import org.antlr.v4.runtime.Token;
  */
 public class SyntaxErrorListener extends BaseErrorListener
 {
+    private static final String MISSING_FINIS = "El programa termina sin cerrarse: falta 'FINIS;' al final.";
+
     private final ErrorManager errorManager;
 
     public SyntaxErrorListener(ErrorManager errorManager)
@@ -39,7 +41,18 @@ public class SyntaxErrorListener extends BaseErrorListener
             line               = previous.getLine();
             charPositionInLine = previous.getCharPositionInLine() + previous.getText().length();
         }
-        errorManager.addSyntactic(translate(message), lexeme, line, charPositionInLine + 1);
+        errorManager.addSyntactic(endOfFile(offendingSymbol, message) ? MISSING_FINIS : translate(message),
+                lexeme, line, charPositionInLine + 1);
+    }
+
+    /**
+     * A PigLatin program cut short: ANTLR would list every token that could
+     * follow, when the fix is always the same closing line.
+     */
+    private static boolean endOfFile(Object offendingSymbol, String message)
+    {
+        return offendingSymbol instanceof Token token && token.getType() == Token.EOF
+                && message != null && message.contains("'FINIS'");
     }
 
     /**

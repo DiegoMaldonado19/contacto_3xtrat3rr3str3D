@@ -25,6 +25,18 @@ import org.antlr.v4.runtime.IntStream;
     private final Deque<Integer> indents = new ArrayDeque<>();
 
     /**
+     * Cada '{' abierto: true si es un literal, false si es el cuerpo de un
+     * elegir, que si usa la sangria para sus casos.
+     */
+    private final Deque<Boolean> braces  = new ArrayDeque<>();
+
+    /** Parentesis, corchetes y literales abiertos: dentro, un salto de linea no es sangria. */
+    private int                  joined;
+
+    /** Tipo del ultimo token visible, para saber si una '{' abre un literal. */
+    private int                  lastType;
+
+    /**
      * Se entrega primero lo encolado. Cuando no hay nada encolado se pide el
      * siguiente token real: si es NUEVA_LINEA su accion habra llenado la cola,
      * y esos INDENT/DEDENT saldran en las llamadas siguientes, justo despues
@@ -40,6 +52,10 @@ import org.antlr.v4.runtime.IntStream;
 
         Token token = super.nextToken();
 
+        if (token.getChannel() == DEFAULT_TOKEN_CHANNEL)
+        {
+            lastType = token.getType();
+        }
         if (token.getType() == EOF)
         {
             // Un archivo puede terminar dentro de varios bloques abiertos: hay
@@ -65,7 +81,8 @@ import org.antlr.v4.runtime.IntStream;
         int next = _input.LA(1);
 
         // Linea en blanco o que solo lleva comentario: no abre ni cierra bloque.
-        if (next == '\r' || next == '\n' || next == '/' || next == IntStream.EOF)
+        // Dentro de ( [ o de un literal { la linea continua, como en Python.
+        if (next == '\r' || next == '\n' || next == '/' || next == IntStream.EOF || joined > 0)
         {
             return;
         }
@@ -101,6 +118,35 @@ import org.antlr.v4.runtime.IntStream;
                 indents.pop();
                 pending.add(makeToken(DEDENT));
             }
+        }
+    }
+
+    /** Un '{' tras '=', ',', '(', '{' o 'retornar' abre un literal; tras ')' es el cuerpo de un elegir. */
+    private void openBrace()
+    {
+        boolean literal = lastType == ASIGNACION || lastType == COMA || lastType == PAR_IZQ
+                || lastType == LLAVE_IZQ || lastType == RETORNAR;
+
+        braces.push(literal);
+        if (literal)
+        {
+            joined++;
+        }
+    }
+
+    private void closeBrace()
+    {
+        if (!braces.isEmpty() && braces.pop())
+        {
+            joined--;
+        }
+    }
+
+    private void closeGroup()
+    {
+        if (joined > 0)
+        {
+            joined--;
         }
     }
 
@@ -177,12 +223,12 @@ ASIGNACION : '=' ;
 NEGACION   : '!' ;
 
 /* ---------- 5. Signos de puntuacion --------------------------------- */
-PAR_IZQ    : '(' ;
-PAR_DER    : ')' ;
-LLAVE_IZQ  : '{' ;
-LLAVE_DER  : '}' ;
-COR_IZQ    : '[' ;
-COR_DER    : ']' ;
+PAR_IZQ    : '(' { joined++; } ;
+PAR_DER    : ')' { closeGroup(); } ;
+LLAVE_IZQ  : '{' { openBrace(); } ;
+LLAVE_DER  : '}' { closeBrace(); } ;
+COR_IZQ    : '[' { joined++; } ;
+COR_DER    : ']' { closeGroup(); } ;
 PUNTO_COMA : ';' ;
 DOS_PUNTOS : ':' ;
 COMA       : ',' ;
@@ -199,11 +245,9 @@ ID : ( LETRA | '_' ) ( LETRA | DIGITO | '_' )* ;
 
 /* ---------- 8. Sangria y ruido ---------------------------------------
  * NUEVA_LINEA se queda con el salto Y con la sangria de la linea siguiente,
- * porque para decidir el INDENT hay que verlas juntas.
- *
- * ponytail: la sangria dentro de parentesis o corchetes abiertos tambien
- * cuenta. Ningun ejemplo del enunciado parte una expresion en varias lineas;
- * si aparece, llevar la cuenta de la profundidad y salir temprano.
+ * porque para decidir el INDENT hay que verlas juntas. Dentro de parentesis,
+ * corchetes o un literal { } la sangria no cuenta: asi una matriz se puede
+ * escribir fila por fila (aclaracion de la auxiliar, 21/09/2026).
  * -------------------------------------------------------------------- */
 NUEVA_LINEA : ( '\r'? '\n' | '\r' ) [ \t]* { handleNewLine(); } -> channel(HIDDEN) ;
 

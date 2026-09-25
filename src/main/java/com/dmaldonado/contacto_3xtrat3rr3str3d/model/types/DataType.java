@@ -19,8 +19,10 @@ public enum DataType
 
     /** Return type of a function declared with actio. */
     VOID("void", 0),
-    /** Type of an instance of a user defined structura. */
+    /** Type of an instance of a user defined structura, or of a Zetariano class. */
     ESTRUCTURA("structura", 0),
+    /** Type of the null literal: it fits any object, structura or text, never a number. */
+    NULO("null", 0),
     /** Error marker: keeps one real error from cascading into ten messages. */
     ERROR("error", -1);
 
@@ -56,9 +58,10 @@ public enum DataType
     }
 
     /**
-     * Maps the type written in the source, in PigLatin or Y?, to its DataType.
-     * "bool" is the explicit boolean type; "verum"/"falsus" are the older form
-     * PigLatin still accepts as a type. Anything else is a user defined structure.
+     * Maps the type written in the source, in PigLatin, Y? or Zetariano, to its
+     * DataType. "bool" is the explicit boolean type; "verum"/"falsus" are the
+     * older form PigLatin still accepts as a type. Anything else is a user
+     * defined structure or class.
      */
     public static DataType fromText(String text)
     {
@@ -69,12 +72,13 @@ public enum DataType
 
         return switch (text)
         {
-            case "numerus", "entero"         -> NUMERUS;
-            case "decimalis", "flotante"     -> DECIMALIS;
-            case "textum", "cadena"          -> TEXTUM;
-            case "littera", "caracter"       -> LITTERA;
-            case "bool", "verum", "falsus"   -> BOOLEANO;
-            default                          -> ESTRUCTURA;
+            case "numerus", "entero", "int"                -> NUMERUS;
+            case "decimalis", "flotante", "double"         -> DECIMALIS;
+            case "textum", "cadena", "String"              -> TEXTUM;
+            case "littera", "caracter", "char"             -> LITTERA;
+            case "bool", "verum", "falsus", "boolean"      -> BOOLEANO;
+            case "void"                                    -> VOID;
+            default                                        -> ESTRUCTURA;
         };
     }
 

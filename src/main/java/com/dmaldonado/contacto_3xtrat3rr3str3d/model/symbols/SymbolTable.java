@@ -76,7 +76,9 @@ public class SymbolTable
         {
             allSymbols.add(symbol);
 
-            if (symbol instanceof VariableSymbol || symbol instanceof ArraySymbol)
+            // An attribute declared in a class scope lives in the object, not in the stack.
+            if ((symbol instanceof VariableSymbol || symbol instanceof ArraySymbol)
+                    && symbol.getCategory() != SymbolCategory.ATTRIBUTE)
             {
                 boolean global = currentScope == globalScope;
                 symbol.setStorage(global ? globalSize++ : nextSlot++, global);

@@ -54,6 +54,42 @@ public final class CEmitter
                 }
             }
 
+            /* Un objeto o arreglo sin crear es null (0): usarlo detiene el programa. */
+            void checkNull(float pointer)
+            {
+                if (pointer == 0)
+                {
+                    printf("\\nError: referencia nula (objeto o arreglo sin crear).\\n");
+                    exit(1);
+                }
+            }
+
+            /* Division y residuo enteros: en C, dividir un int entre cero aborta el programa. */
+            void checkDivisor(float right)
+            {
+                if ((int) right == 0)
+                {
+                    printf("\\nError: division entre cero.\\n");
+                    exit(1);
+                }
+            }
+
+            float intDivide(float left, float right)
+            {
+                checkDivisor(right);
+                return (float) ((int) left / (int) right);
+            }
+
+            float intModulo(float left, float right)
+            {
+                checkDivisor(right);
+                return (float) ((int) left % (int) right);
+            }
+
+            /* Cada lenguaje escribe sus booleanos: 0 PigLatin, 1 Y?, 2 Zetariano. */
+            const char *TRUE_WORDS[]  = { "verum", "verdadero", "true" };
+            const char *FALSE_WORDS[] = { "falsus", "falso", "false" };
+
             float reserve(int size)
             {
                 float start = H;
@@ -126,9 +162,9 @@ public final class CEmitter
                 fputs(text, stdout);
             }
 
-            void printBool(float value)
+            void printBool(float value, float language)
             {
-                fputs(value != 0 ? "verum" : "falsus", stdout);
+                fputs(value != 0 ? TRUE_WORDS[(int) language] : FALSE_WORDS[(int) language], stdout);
             }
 
             void printString(float pointer)
@@ -144,6 +180,18 @@ public final class CEmitter
                 putchar('\\n');
             }
 
+            /* Lo que no es un numero se descarta: si no, se quedaria atascado y toda lectura siguiente fallaria. */
+            void discardLine(void)
+            {
+                int character;
+
+                do
+                {
+                    character = getchar();
+                }
+                while (character != '\\n' && character != EOF);
+            }
+
             float readInt(void)
             {
                 int value = 0;
@@ -151,6 +199,7 @@ public final class CEmitter
                 if (scanf("%d", &value) != 1)
                 {
                     value = 0;
+                    discardLine();
                 }
                 return (float) value;
             }
@@ -162,6 +211,7 @@ public final class CEmitter
                 if (scanf("%f", &value) != 1)
                 {
                     value = 0;
+                    discardLine();
                 }
                 return value;
             }
@@ -255,9 +305,9 @@ public final class CEmitter
                 return textFromBytes(text);
             }
 
-            float boolToString(float value)
+            float boolToString(float value, float language)
             {
-                return textFromBytes(value != 0 ? "verum" : "falsus");
+                return textFromBytes(value != 0 ? TRUE_WORDS[(int) language] : FALSE_WORDS[(int) language]);
             }
             """;
 
@@ -353,7 +403,8 @@ public final class CEmitter
             case "="                                             -> q.result() + " = " + q.arg1() + ";";
             case "+", "-", "*", "/", "<", ">", "<=", ">=", "==", "!=" ->
                     q.result() + " = " + q.arg1() + " " + q.op() + " " + q.arg2() + ";";
-            case "div"     -> q.result() + " = (float) ((int) " + q.arg1() + " / (int) " + q.arg2() + ");";
+            case "div"     -> q.result() + " = intDivide(" + q.arg1() + ", " + q.arg2() + ");";
+            case "mod"     -> q.result() + " = intModulo(" + q.arg1() + ", " + q.arg2() + ");";
             case "=[]"     -> q.result() + " = " + q.arg1() + "[" + index(q.arg2()) + "];";
             case "[]="     -> q.result() + "[" + index(q.arg1()) + "] = " + q.arg2() + ";";
             case "goto"    -> "goto " + q.result() + ";";

@@ -3,6 +3,7 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstNode;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstVisitor;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Expression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.FunctionSymbol;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -12,6 +13,9 @@ public class MethodCallExpression extends Expression
     private final Expression       owner;
     private final String           methodName;
     private final List<Expression> arguments;
+
+    /** The method overload the call resolved to. Set by the semantic analyzer. */
+    private FunctionSymbol function;
 
     public MethodCallExpression(Expression owner, String methodName, List<Expression> arguments,
                                 int line, int column)
@@ -35,6 +39,16 @@ public class MethodCallExpression extends Expression
     public List<Expression> getArguments()
     {
         return arguments;
+    }
+
+    public FunctionSymbol getFunction()
+    {
+        return function;
+    }
+
+    public void setFunction(FunctionSymbol function)
+    {
+        this.function = function;
     }
 
     @Override

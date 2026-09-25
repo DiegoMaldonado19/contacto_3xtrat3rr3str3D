@@ -3,6 +3,7 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstNode;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstVisitor;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Expression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.FunctionSymbol;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -11,6 +12,9 @@ public class NewExpression extends Expression
 {
     private final String           className;
     private final List<Expression> arguments;
+
+    /** The constructor overload the call resolved to. Set by the semantic analyzer. */
+    private FunctionSymbol constructor;
 
     public NewExpression(String className, List<Expression> arguments, int line, int column)
     {
@@ -27,6 +31,16 @@ public class NewExpression extends Expression
     public List<Expression> getArguments()
     {
         return arguments;
+    }
+
+    public FunctionSymbol getConstructor()
+    {
+        return constructor;
+    }
+
+    public void setConstructor(FunctionSymbol constructor)
+    {
+        this.constructor = constructor;
     }
 
     @Override

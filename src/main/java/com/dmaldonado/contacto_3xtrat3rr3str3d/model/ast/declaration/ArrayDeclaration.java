@@ -3,16 +3,27 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.declaration;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstNode;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.AstVisitor;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.Expression;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.expression.CompositeLiteralExpression;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.Symbol;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.types.DataType;
 import java.util.ArrayList;
 import java.util.List;
 
-/** series mis_enteros[2] : numerus {1, 1}; */
+/**
+ * series mis_enteros[2] : numerus {1, 1};   entero m[3][2] = {{1, 2}, ...}   int[] a = new int[5];
+ *
+ * An array of any rank is flattened row major into one block of the heap:
+ * m[i][j] lives at m + i * columns + j. With more than one dimension the
+ * initial values arrive as nested literals, one per row, and getFlatValues()
+ * lines them up in that same order.
+ *
+ * dimensions is empty only for a Zetariano "int[] a;", which starts as null.
+ */
 public class ArrayDeclaration extends AstNode
 {
     private final String           name;
-    private final Expression       size;
+    private final List<Expression> dimensions;
+    private final int              rank;
     private final String           typeText;
     private final DataType         elementType;
     private final List<Expression> initialValues;
@@ -20,12 +31,13 @@ public class ArrayDeclaration extends AstNode
     /** The declared symbol, which knows its stack slot. Set by the semantic analyzer. */
     private Symbol symbol;
 
-    public ArrayDeclaration(String name, Expression size, String typeText,
+    public ArrayDeclaration(String name, List<Expression> dimensions, int rank, String typeText,
                             List<Expression> initialValues, int line, int column)
     {
         super(line, column);
         this.name          = name;
-        this.size          = size;
+        this.dimensions    = dimensions;
+        this.rank          = rank;
         this.typeText      = typeText;
         this.elementType   = DataType.fromText(typeText);
         this.initialValues = initialValues;
@@ -36,9 +48,15 @@ public class ArrayDeclaration extends AstNode
         return name;
     }
 
-    public Expression getSize()
+    /** One size per dimension, outermost first. */
+    public List<Expression> getDimensions()
     {
-        return size;
+        return dimensions;
+    }
+
+    public int getRank()
+    {
+        return rank;
     }
 
     public String getTypeText()
@@ -51,10 +69,34 @@ public class ArrayDeclaration extends AstNode
         return elementType;
     }
 
-    /** Empty when the array was declared without initial values. */
+    /** As written: nested literals, one per row, when the rank is above 1. Empty without values. */
     public List<Expression> getInitialValues()
     {
         return initialValues;
+    }
+
+    /** The values in the order they are stored: row after row. */
+    public List<Expression> getFlatValues()
+    {
+        List<Expression> flat = new ArrayList<>();
+
+        flatten(initialValues, rank - 1, flat);
+        return flat;
+    }
+
+    private static void flatten(List<Expression> values, int depth, List<Expression> flat)
+    {
+        for (Expression value : values)
+        {
+            if (depth > 0 && value instanceof CompositeLiteralExpression row)
+            {
+                flatten(row.getValues(), depth - 1, flat);
+            }
+            else
+            {
+                flat.add(value);
+            }
+        }
     }
 
     public Symbol getSymbol()
@@ -76,17 +118,13 @@ public class ArrayDeclaration extends AstNode
     @Override
     public String getLabel()
     {
-        return "series " + name + " : " + (typeText == null ? "?" : typeText);
+        return "series " + name + "[]".repeat(rank) + " : " + (typeText == null ? "?" : typeText);
     }
 
     @Override
     public List<AstNode> getChildren()
     {
-        List<AstNode> children = new ArrayList<>();
-        if (size != null)
-        {
-            children.add(size);
-        }
+        List<AstNode> children = new ArrayList<>(dimensions);
         children.addAll(initialValues);
         return children;
     }
