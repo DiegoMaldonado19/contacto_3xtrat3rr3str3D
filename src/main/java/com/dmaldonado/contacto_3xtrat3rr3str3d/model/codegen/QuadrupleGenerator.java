@@ -104,6 +104,8 @@ public class QuadrupleGenerator implements AstVisitor<String>
     private final Map<String, StructDeclaration> structs     = new HashMap<>();
     /** The layouts above that are classes: their instances start as null, never pre-allocated. */
     private final Set<String>                    classes     = new HashSet<>();
+    /** The C name each function got: two source names may not end up as one. */
+    private final Map<FunctionSymbol, String>    cNames      = new HashMap<>();
     private final Deque<String>                  breakLabels    = new ArrayDeque<>();
     private final Deque<String>                  continueLabels = new ArrayDeque<>();
 
@@ -181,11 +183,18 @@ public class QuadrupleGenerator implements AstVisitor<String>
         return code;
     }
 
-    /** heap[0] = -1, every literal byte by byte, then H past them and P past the globals. */
+    /**
+     * H past the literals and P past the globals, checked before anything is
+     * written: a pool bigger than the heap must stop, not overwrite memory.
+     * Then heap[0] = -1 and every literal byte by byte.
+     */
     private List<Quadruple> prologue(int globalSize)
     {
         List<Quadruple> start = new ArrayList<>();
 
+        start.add(new Quadruple("=", String.valueOf(poolEnd), "", "H"));
+        start.add(new Quadruple("=", String.valueOf(globalSize), "", "P"));
+        start.add(new Quadruple("checkMemory", "", "", ""));
         start.add(new Quadruple("[]=", "0", "-1", HEAP));
 
         for (Map.Entry<String, Integer> literal : stringPool.entrySet())
@@ -199,8 +208,6 @@ public class QuadrupleGenerator implements AstVisitor<String>
             }
             start.add(new Quadruple("[]=", String.valueOf(address), "-1", HEAP));
         }
-        start.add(new Quadruple("=", String.valueOf(poolEnd), "", "H"));
-        start.add(new Quadruple("=", String.valueOf(globalSize), "", "P"));
         return start;
     }
 
@@ -237,6 +244,10 @@ public class QuadrupleGenerator implements AstVisitor<String>
         {
             value = allocateStruct(node.getTypeText(), new HashSet<>());
         }
+        else if (node.getType() == DataType.TEXTUM && language != Language.Z)
+        {
+            value = String.valueOf(intern(""));   // PigLatin and Y? have no null: a text starts empty
+        }
         else
         {
             value = "0";
@@ -245,13 +256,14 @@ public class QuadrupleGenerator implements AstVisitor<String>
         return null;
     }
 
-    /** One block for every dimension together; a Zetariano "int[] a;" stays null. */
+    /** One block for every dimension together; a Zetariano "int[] a;" stays null, "int[] b = a;" names a. */
     @Override
     public String visitArrayDeclaration(ArrayDeclaration node)
     {
         if (node.getDimensions().isEmpty())
         {
-            store(slotOf(node.getSymbol()), "0");
+            store(slotOf(node.getSymbol()),
+                  node.getInitialValues().isEmpty() ? "0" : node.getInitialValues().get(0).accept(this));
             return null;
         }
 
@@ -348,9 +360,13 @@ public class QuadrupleGenerator implements AstVisitor<String>
     @Override
     public String visitAssignment(Assignment node)
     {
-        String value = node.getValue().accept(this);
+        Location target = locate(node.getTarget());
 
-        store(locate(node.getTarget()), value);
+        // x op= e shares its target with the operation: it reads x where it was already located.
+        String value = node.getValue() instanceof BinaryExpression compound && compound.getLeft() == node.getTarget()
+                       ? binary(compound, load(target)) : node.getValue().accept(this);
+
+        store(target, value);
         return null;
     }
 
@@ -462,6 +478,11 @@ public class QuadrupleGenerator implements AstVisitor<String>
                 continue;
             }
             emit("if", equality(value, clause.getValue().accept(this), type, true), "", body);
+        }
+        // Without a case the value is still read, so C does not flag it unused: both ways lead on.
+        if (node.getCases().stream().allMatch(CaseClause::isDefault))
+        {
+            emit("if", value, "", defaultCase);
         }
         jump(defaultCase);
 
@@ -588,8 +609,13 @@ public class QuadrupleGenerator implements AstVisitor<String>
         {
             return shortCircuit(node);
         }
+        return binary(node, node.getLeft().accept(this));
+    }
 
-        String   left      = node.getLeft().accept(this);
+    /** The operation once its left operand is already evaluated. */
+    private String binary(BinaryExpression node, String left)
+    {
+        String   operator  = node.getOperator();
         String   right     = node.getRight().accept(this);
         DataType leftType  = node.getLeft().getComputedType();
         DataType rightType = node.getRight().getComputedType();
@@ -598,7 +624,8 @@ public class QuadrupleGenerator implements AstVisitor<String>
         {
             return nativeCall("concat", text(left, leftType), text(right, rightType));
         }
-        if (("==".equals(operator) || "!=".equals(operator)) && leftType == DataType.TEXTUM)
+        if (("==".equals(operator) || "!=".equals(operator)) && leftType == DataType.TEXTUM
+                && rightType == DataType.TEXTUM)
         {
             return equality(left, right, DataType.TEXTUM, "==".equals(operator));
         }
@@ -908,8 +935,8 @@ public class QuadrupleGenerator implements AstVisitor<String>
 
     /**
      * m[i][j] is ONE cell of the flattened matrix: m + i * columns + j, the
-     * strides taken from the declared dimensions. An array whose size is not
-     * known here, a parameter or an attribute, may still be null.
+     * strides taken from the declared dimensions. The runtime checks the cell
+     * against the length the array carries, which also stops a null array.
      */
     private Location element(ArrayAccessExpression access)
     {
@@ -928,22 +955,22 @@ public class QuadrupleGenerator implements AstVisitor<String>
         String        pointer    = base.accept(this);
         String        index      = indices.get(0).accept(this);
 
-        if (dimensions.get(0) < 0)
-        {
-            emit("checkNull", pointer, "", "");
-        }
         for (int k = 1; k < indices.size(); k++)
         {
-            String row  = newTemporary();
-            String cell = newTemporary();
+            String row    = newTemporary();
+            String cell   = newTemporary();
+            String column = indices.get(k).accept(this);
 
+            // m[0][4] of a 2 x 3 is not m[1][1]: each inner index within its own dimension.
+            emit("checkBound", column, String.valueOf(dimensions.get(k)), "");
             emit("*", index, String.valueOf(dimensions.get(k)), row);
-            emit("+", row, indices.get(k).accept(this), cell);
+            emit("+", row, column, cell);
             index = cell;
         }
 
         String address = newTemporary();
 
+        emit("checkIndex", pointer, index, "");
         emit("+", pointer, index, address);
         return new Location(HEAP, address);
     }
@@ -987,12 +1014,23 @@ public class QuadrupleGenerator implements AstVisitor<String>
     }
 
     /**
-     * An array is size consecutive cells. One of structures also gets a block
-     * per element, so writing arreglo[0].campo never goes through a null.
+     * An array is its length and then size consecutive cells; its pointer is
+     * the first cell, so heap[pointer - 1] is the length every access checks.
+     * One of structures also gets a block per element, so writing
+     * arreglo[0].campo never goes through a null.
      */
     private String allocateArray(String size, String elementStruct, Set<String> expanding)
     {
-        String pointer = reserve(size);
+        String cells   = newTemporary();
+        String pointer = newTemporary();
+
+        emit("checkSize", size, "", "");
+        emit("+", size, "1", cells);
+
+        String header = reserve(cells);
+
+        store(new Location(HEAP, header), size);
+        emit("+", header, "1", pointer);
 
         if (elementStruct == null)
         {
@@ -1102,10 +1140,11 @@ public class QuadrupleGenerator implements AstVisitor<String>
             {
                 character = switch (body.charAt(++i))
                 {
-                    case 'n' -> '\n';
-                    case 't' -> '\t';
-                    case 'r' -> '\r';
-                    default  -> body.charAt(i);   // \" \' \\
+                    case 'n'            -> '\n';
+                    case 't'            -> '\t';
+                    case 'r'            -> '\r';
+                    case '"', '\'', '\\' -> body.charAt(i);
+                    default             -> body.charAt(--i);   // "C:\Users" keeps its backslash
                 };
             }
             text.append(character);
@@ -1159,6 +1198,7 @@ public class QuadrupleGenerator implements AstVisitor<String>
             case TEXTUM    -> "readString";
             case DECIMALIS -> "readFloat";
             case LITTERA   -> "readChar";
+            case BOOLEANO  -> "readBool";
             default        -> "readInt";
         };
     }
@@ -1166,19 +1206,32 @@ public class QuadrupleGenerator implements AstVisitor<String>
     /**
      * Its C name: fn_ keeps it apart from the natives and from C itself, and
      * the parameter types keep every overload apart. fn_something and
-     * fn_something__numerus are two functions.
+     * fn_something__numerus are two functions. '_' is also legal inside a
+     * name, so Pila.apilar and a function Pila_apilar would meet: the second
+     * one to ask gets a number.
      */
-    private static String cName(FunctionSymbol function)
+    private String cName(FunctionSymbol function)
     {
-        StringBuilder name      = new StringBuilder("fn_" + function.getName().replace('.', '_'));
-        String        separator = "__";
-
-        for (VariableSymbol parameter : function.getParameters())
+        return cNames.computeIfAbsent(function, key ->
         {
-            name.append(separator).append(parameter.isArray() ? "arr_" : "").append(parameter.getTypeText());
-            separator = "_";
-        }
-        return name.toString();
+            // Only what C takes in a name: Clase.<atributos> becomes fn_Clase__atributos_.
+            StringBuilder name      = new StringBuilder("fn_" + key.getName().replaceAll("[^A-Za-z0-9_]", "_"));
+            String        separator = "__";
+
+            for (VariableSymbol parameter : key.getParameters())
+            {
+                name.append(separator).append(parameter.isArray() ? "arr_" : "").append(parameter.getTypeText());
+                separator = "_";
+            }
+
+            String unique = name.toString();
+
+            for (int n = 2; cNames.containsValue(unique); n++)
+            {
+                unique = name + "_" + n;
+            }
+            return unique;
+        });
     }
 
     /* =================================================================

@@ -32,6 +32,12 @@ public class SyntaxErrorListener extends BaseErrorListener
         String lexeme = (offendingSymbol instanceof Token token)
                 ? token.getText() : String.valueOf(offendingSymbol);
 
+        // The INDENT / DEDENT of Y? cover no text: the error is in the indentation itself.
+        if (lexeme.isEmpty() && offendingSymbol instanceof Token token && token.getType() != Token.EOF)
+        {
+            lexeme = "(sangria)";
+        }
+
         Token previous = missingAfter(recognizer, offendingSymbol, message);
 
         if (previous != null)
@@ -41,8 +47,14 @@ public class SyntaxErrorListener extends BaseErrorListener
             line               = previous.getLine();
             charPositionInLine = previous.getCharPositionInLine() + previous.getText().length();
         }
-        errorManager.addSyntactic(endOfFile(offendingSymbol, message) ? MISSING_FINIS : translate(message),
-                lexeme, line, charPositionInLine + 1);
+        String description = endOfFile(offendingSymbol, message) ? MISSING_FINIS : translate(message);
+
+        // "x = a = b": the second '=' was meant as a comparison, where one would fit.
+        if ("=".equals(lexeme) && message != null && message.contains("'=='"))
+        {
+            description += " Para comparar use '=='.";
+        }
+        errorManager.addSyntactic(description, lexeme, line, charPositionInLine + 1);
     }
 
     /**
@@ -81,6 +93,10 @@ public class SyntaxErrorListener extends BaseErrorListener
             return "Error de sintaxis.";
         }
         return message
+                .replace("extraneous input ''", "sangria inesperada")
+                .replace("mismatched input ''", "no se esperaba un cambio de sangria")
+                .replace("DEDENT", "fin de bloque")
+                .replace("INDENT", "sangria")
                 .replace("mismatched input", "no se esperaba")
                 .replace("no viable alternative at input", "construccion invalida en")
                 .replace("extraneous input", "sobra el token")
@@ -89,6 +105,7 @@ public class SyntaxErrorListener extends BaseErrorListener
                 .replace("alternative", "alternativa")
                 // ANTLR appends "at '<token>'"; only that exact shape is
                 // replaced, so the word "at" inside a lexeme is left alone.
+                .replace(" at ''", " al final de la linea")
                 .replace(" at '", " en '");
     }
 }

@@ -5,10 +5,10 @@ lexer grammar YLexer;
  * NUEVA_LINEA consume el salto y la sangria de la linea siguiente, y desde su
  * accion se encolan los INDENT/DEDENT que el parser si vera.
  *
- * Los dos tokens se declaran en 'tokens' porque no tienen regla propia: nacen
+ * Estos tokens se declaran en 'tokens' porque no tienen regla propia: nacen
  * en codigo, no del texto.
  */
-tokens { INDENT, DEDENT }
+tokens { INDENT, DEDENT, SANGRIA_INVALIDA }
 
 @lexer::header {
 import java.util.ArrayDeque;
@@ -80,9 +80,16 @@ import org.antlr.v4.runtime.IntStream;
     {
         int next = _input.LA(1);
 
+        // 'entonces', 'hacer' o ':' nunca van dentro de un ( [ o literal: si hay uno
+        // abierto se olvido cerrarlo, y el bloque de la linea siguiente si cuenta.
+        if (lastType == ENTONCES || lastType == HACER || lastType == DOS_PUNTOS)
+        {
+            joined = 0;
+        }
+
         // Linea en blanco o que solo lleva comentario: no abre ni cierra bloque.
         // Dentro de ( [ o de un literal { la linea continua, como en Python.
-        if (next == '\r' || next == '\n' || next == '/' || next == IntStream.EOF || joined > 0)
+        if (next == '\r' || next == '\n' || next == IntStream.EOF || joined > 0 || commentOnly())
         {
             return;
         }
@@ -118,7 +125,33 @@ import org.antlr.v4.runtime.IntStream;
                 indents.pop();
                 pending.add(makeToken(DEDENT));
             }
+            // Como Python: volver a una sangria que ningun bloque abierto tiene es un error.
+            if (width > (indents.isEmpty() ? 0 : indents.peek()))
+            {
+                pending.add(makeToken(SANGRIA_INVALIDA));
+            }
         }
+    }
+
+    /** Solo comentarios hasta el fin de la linea: bloques '/* */' seguidos de nada o de un '//'. */
+    private boolean commentOnly()
+    {
+        int k = 1;
+
+        while (_input.LA(k) == '/' && _input.LA(k + 1) == '*')
+        {
+            for (k += 2; _input.LA(k) != IntStream.EOF && !(_input.LA(k) == '*' && _input.LA(k + 1) == '/'); k++)
+            {
+            }
+            for (k += 2; _input.LA(k) == ' ' || _input.LA(k) == '\t'; k++)
+            {
+            }
+        }
+
+        int next = _input.LA(k);
+
+        return (next == '/' && _input.LA(k + 1) == '/')
+            || (k > 1 && (next == '\r' || next == '\n' || next == IntStream.EOF));
     }
 
     /** Un '{' tras '=', ',', '(', '{' o 'retornar' abre un literal; tras ')' es el cuerpo de un elegir. */
@@ -150,16 +183,18 @@ import org.antlr.v4.runtime.IntStream;
         }
     }
 
-    /** Token de ancho cero en la posicion actual: no tapa texto del archivo. */
+    /**
+     * Token de ancho cero en la posicion actual: no tapa texto del archivo. Lleva
+     * su fuente: al reparar un error, ANTLR la lee para fabricar el token que falta.
+     */
     private Token makeToken(int type)
     {
-        CommonToken token = new CommonToken(type, "");
+        CommonToken token = new CommonToken(_tokenFactorySourcePair, type, DEFAULT_TOKEN_CHANNEL,
+                getCharIndex(), getCharIndex() - 1);
 
+        token.setText("");
         token.setLine(getLine());
         token.setCharPositionInLine(getCharPositionInLine());
-        token.setStartIndex(getCharIndex());
-        token.setStopIndex(getCharIndex() - 1);
-        token.setChannel(DEFAULT_TOKEN_CHANNEL);
         return token;
     }
 }
@@ -235,9 +270,9 @@ COMA       : ',' ;
 PUNTO      : '.' ;
 
 /* ---------- 6. Literales -------------------------------------------- */
-DECIMAL   : DIGITO+ '.' DIGITO+ ;    // antes que ENTERO
+DECIMAL   : DIGITO+ '.' DIGITO* ;    // antes que ENTERO; '36.' es un ejemplo del enunciado
 ENTERO    : DIGITO+ ;
-TEXTO     : '"' ( ESCAPE | ~["\\\r\n] )* '"' ;
+TEXTO     : '"' EN_TEXTO* '"' ;
 CARACTER  : '\'' ( ESCAPE | ~['\\\r\n] ) '\'' ;
 
 /* ---------- 7. Identificadores -------------------------------------- */
@@ -256,7 +291,9 @@ COMENTARIO_BLOQUE : '/*' .*? '*/' -> channel(HIDDEN) ;
 ESPACIOS          : [ \t\f]+      -> channel(HIDDEN) ;
 
 /* ---------- 9. Errores lexicos --------------------------------------- */
-TEXTO_SIN_CERRAR      : '"'  ( ESCAPE | ~["\\\r\n] )* ;
+TEXTO_SIN_CERRAR      : '"'  EN_TEXTO* ;
+CARACTER_LARGO        : '\'' ( ESCAPE | ~['\\\r\n] ) ( ESCAPE | ~['\\\r\n] )+ '\'' ;
+CARACTER_MAL_FORMADO  : '\'' ( '\\' ~[nrt"'\\\r\n] )? '\'' ;
 CARACTER_SIN_CERRAR   : '\'' ( ESCAPE | ~['\\\r\n] )? ;
 COMENTARIO_SIN_CERRAR : '/*' ( ~'*' | '*' ~'/' )* '*'? ;
 CARACTER_INVALIDO     : . ;
@@ -265,3 +302,5 @@ CARACTER_INVALIDO     : . ;
 fragment LETRA  : [a-zA-ZáéíóúÁÉÍÓÚñÑ] ;
 fragment DIGITO : [0-9] ;
 fragment ESCAPE : '\\' [nrt"'\\] ;
+// Inside a text any escape lexes: an unknown one, as in "C:\Users", is kept as written.
+fragment EN_TEXTO : '\\' ~[\r\n] | ~["\\\r\n] ;

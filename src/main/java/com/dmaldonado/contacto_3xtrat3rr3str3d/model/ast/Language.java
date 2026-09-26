@@ -1,5 +1,7 @@
 package com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast;
 
+import java.util.Set;
+
 /**
  * Source language of a Program. The three languages share one AST; this is
  * what lets the semantic analyzer apply the few rules that differ, such as
@@ -7,15 +9,23 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast;
  */
 public enum Language
 {
-    PIG("pig"),
-    Y("y"),
-    Z("z");
+    PIG("pig", Set.of("numerus", "decimalis", "textum", "littera", "bool", "verum", "falsus")),
+    Y("y", Set.of("entero", "flotante", "cadena", "caracter", "bool")),
+    Z("z", Set.of("int", "double", "String", "char", "boolean"));
 
-    private final String extension;
+    private final String      extension;
+    private final Set<String> typeNames;
 
-    Language(String extension)
+    Language(String extension, Set<String> typeNames)
     {
         this.extension = extension;
+        this.typeNames = typeNames;
+    }
+
+    /** Its own names for the primitive types: "int" names nothing in a .pig. */
+    public boolean hasTypeName(String name)
+    {
+        return typeNames.contains(name);
     }
 
     /** @return null when the extension is not a language the compiler reads. */

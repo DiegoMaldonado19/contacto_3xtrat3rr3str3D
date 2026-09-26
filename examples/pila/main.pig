@@ -1,7 +1,7 @@
 // Prueba de la auxiliar con las correcciones que sugiere el compilador:
 // los ";" faltantes (lineas 20, 33 y 36) y el "FINIS;" final.
 //
-// Entrada de ejemplo: 1 5 x 1 7 x 3 x 2 x 3 x 4 x
+// Entrada de ejemplo, un valor por linea: 1 5 x 1 7 x 3 x 2 x 3 x 4 x
 // Imprime la pila "7, 5", desapila 7 y luego imprime "5".
 import Nodo.z
 import Pila.z

@@ -9,7 +9,8 @@ import java.util.List;
  * esto fuerza : numerus, inside a function signature.
  *
  * array marks the Y? form "[] entero miArray": the function receives the
- * address of the caller's array, never a copy.
+ * address of the caller's array, never a copy. structMarker is the Y? form
+ * "{} Persona p", which only a structure may carry.
  */
 public class Parameter extends AstNode
 {
@@ -17,19 +18,26 @@ public class Parameter extends AstNode
     private final String   typeText;
     private final DataType type;
     private final boolean  array;
+    private final boolean  structMarker;
 
-    public Parameter(String name, String typeText, boolean array, int line, int column)
+    public Parameter(String name, String typeText, boolean array, boolean structMarker, int line, int column)
     {
         super(line, column);
-        this.name     = name;
-        this.typeText = typeText;
-        this.type     = DataType.fromText(typeText);
-        this.array    = array;
+        this.name         = name;
+        this.typeText     = typeText;
+        this.type         = DataType.fromText(typeText);
+        this.array        = array;
+        this.structMarker = structMarker;
     }
 
     public boolean isArray()
     {
         return array;
+    }
+
+    public boolean hasStructMarker()
+    {
+        return structMarker;
     }
 
     public String getName()

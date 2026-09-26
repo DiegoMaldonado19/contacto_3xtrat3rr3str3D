@@ -24,9 +24,20 @@ public class ErrorManager
         this.source = source;
     }
 
+    /**
+     * One error per place: a node analysed twice (x += 1) reports once, and a
+     * second semantic error at the exact same spot is a cascade of the first.
+     */
     private void add(ErrorType type, String description, String lexeme, int line, int column)
     {
-        errors.add(new CompilerError(type, description, lexeme, line, column, source));
+        boolean repeated = errors.stream().anyMatch(error -> error.getType() == type
+                && error.getLine() == line && error.getColumn() == column && error.getSource().equals(source)
+                && (type == ErrorType.SEMANTIC || error.getDescription().equals(description)));
+
+        if (!repeated)
+        {
+            errors.add(new CompilerError(type, description, lexeme, line, column, source));
+        }
     }
 
     public void addLexical(String description, String lexeme, int line, int column)
@@ -39,9 +50,19 @@ public class ErrorManager
         add(ErrorType.SYNTACTIC, description, lexeme, line, column);
     }
 
+    /**
+     * A line with a syntax error was rebuilt by the parser's repair: what the
+     * semantic pass finds on it is noise from that repair, not the user's code.
+     */
     public void addSemantic(String description, String lexeme, int line, int column)
     {
-        add(ErrorType.SEMANTIC, description, lexeme, line, column);
+        boolean repaired = errors.stream().anyMatch(error -> error.getType() == ErrorType.SYNTACTIC
+                && error.getLine() == line && error.getSource().equals(source));
+
+        if (!repaired)
+        {
+            add(ErrorType.SEMANTIC, description, lexeme, line, column);
+        }
     }
 
     public boolean hasErrorsOf(ErrorType type)

@@ -13,7 +13,7 @@ import org.fxmisc.richtext.CodeArea;
  * path it is saved to (null until the first save). The title carries a '*'
  * while there are changes the disk does not have.
  */
-public class EditorTab extends Tab
+public final class EditorTab extends Tab
 {
     private final CodeArea codeArea;
     private Path           path;

@@ -20,20 +20,33 @@ public class StructField extends AstNode
     private final boolean  array;
     /** -1 when the field is not an array or its size is given later. */
     private final int      size;
+    /** Dimensions: 0 for a value, 1 for an array; Zetariano can write more (int[][] m). */
+    private final int      rank;
 
     public StructField(String name, String typeText, boolean array, int size, int line, int column)
+    {
+        this(name, typeText, array ? 1 : 0, size, line, column);
+    }
+
+    public StructField(String name, String typeText, int rank, int size, int line, int column)
     {
         super(line, column);
         this.name     = name;
         this.typeText = typeText;
         this.type     = DataType.fromText(typeText);
-        this.array    = array;
+        this.array    = rank > 0;
         this.size     = size;
+        this.rank     = rank;
     }
 
     public int getSize()
     {
         return size;
+    }
+
+    public int getRank()
+    {
+        return rank;
     }
 
     public String getName()

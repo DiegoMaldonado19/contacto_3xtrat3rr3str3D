@@ -35,7 +35,7 @@ import javafx.scene.layout.Region;
  * calculado. No compila ni lee archivos: ApplicationController es el unico
  * puente al modelo.
  */
-public class MainView extends BorderPane {
+public final class MainView extends BorderPane {
     private final TreeView<Path> workspaceTree = new TreeView<>();
     private final TabPane editors = new TabPane();
     private final TableView<CompilerError> errorTable = new TableView<>();

@@ -1,6 +1,7 @@
 package com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis;
 
 import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.column;
+import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.constant;
 import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.fold;
 import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.line;
 import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.missing;
@@ -68,6 +69,9 @@ import org.antlr.v4.runtime.tree.ParseTree;
  */
 public class ZAstBuilder extends ZParserBaseVisitor<AstNode>
 {
+    /** The method that holds the attribute initializers: no one can write that name, so no one calls it. */
+    private static final String INITIALIZERS = "<atributos>";
+
     /** Class being built: every constructor and method belongs to it. */
     private String className;
 
@@ -129,7 +133,13 @@ public class ZAstBuilder extends ZParserBaseVisitor<AstNode>
         return new ClassDeclaration(className, layout, members, privates, line(ctx), column(ctx));
     }
 
-    /** The attribute initializers run first in every constructor; without one, Java's empty default. */
+    /**
+     * The attribute initializers run first in every constructor, as Java does;
+     * without a constructor, Java's empty default. They live in a method of
+     * their own that each constructor calls: there a constructor parameter
+     * cannot stand in for an attribute of the same name, and each initializer
+     * is analysed once.
+     */
     private List<FunctionDeclaration> withInitializers(List<FunctionDeclaration> methods,
                                                        List<AstNode> initializers,
                                                        ParserRuleContext ctx)
@@ -143,11 +153,22 @@ public class ZAstBuilder extends ZParserBaseVisitor<AstNode>
         }
         members.addAll(methods);
 
-        return members.stream()
-                .map(method -> !method.isConstructor() || initializers.isEmpty() ? method
+        if (initializers.isEmpty())
+        {
+            return members;
+        }
+
+        AstNode call = new ExpressionStatement(new FunctionCallExpression(INITIALIZERS, List.of(),
+                line(ctx), column(ctx)), line(ctx), column(ctx));
+
+        members = new ArrayList<>(members.stream()
+                .map(method -> !method.isConstructor() ? method
                         : constructor(method.getName(), method.getParameters(),
-                                prepend(initializers, method.getBody()), method.getLine(), method.getColumn()))
-                .toList();
+                                prepend(List.of(call), method.getBody()), method.getLine(), method.getColumn()))
+                .toList());
+        members.add(new FunctionDeclaration(INITIALIZERS, "void", List.of(), List.of(),
+                new Block(initializers, line(ctx), column(ctx)), false, className, false, line(ctx), column(ctx)));
+        return members;
     }
 
     private FunctionDeclaration constructor(String name, List<Parameter> parameters, Block body,
@@ -203,14 +224,39 @@ public class ZAstBuilder extends ZParserBaseVisitor<AstNode>
         }
 
         String                       name        = ctx.ID().getText();
-        boolean                      array       = rank(ctx.tipo()) > 0;
         ZParser.InicializadorContext initializer = ctx.inicializador();
+        int                          rank        = rank(ctx.tipo());
+        boolean                      array       = rank > 0;
         int                          size        = -1;
+        boolean                      repeated    = initializers.stream().anyMatch(built ->
+                built instanceof Assignment assignment && assignment.getTarget() instanceof MemberAccessExpression
+                        member && member.getMemberName().equals(name));
 
-        if (initializer instanceof ZParser.InicializadorNuevoArregloContext created
-                && created.expresion().size() == 1)
+        if (repeated || rank > 1)
         {
-            size = constant(created.expresion(0));
+            // A repeated or matrix attribute is reported by the analyzer; its value would only add noise.
+        }
+        else if (initializer instanceof ZParser.InicializadorNuevoArregloContext created)
+        {
+            String createdType = created.tipoBase().getText();
+
+            size = rank == 1 && created.expresion().size() == 1 && createdType.equals(baseType(ctx.tipo()))
+                   ? constant(created.expresion(0)) : -1;
+
+            // new int[cap] is only known when the object is created, and a mismatch is reported there:
+            // a local with the attribute's name, analysed as any declaration, then stored in it.
+            if (size < 0)
+            {
+                List<Expression> dimensions = expressions(created.expresion());
+
+                if (dimensions != null)
+                {
+                    initializers.add(new ArrayDeclaration(name, dimensions, rank, baseType(ctx.tipo()), List.of(),
+                            createdType, line(ctx), column(ctx)));
+                    initializers.add(new Assignment(attributeOf(name, ctx),
+                            new IdentifierExpression(name, line(ctx), column(ctx)), line(ctx), column(ctx)));
+                }
+            }
         }
         else if (initializer instanceof ZParser.InicializadorLiteralContext literal && array)
         {
@@ -235,13 +281,13 @@ public class ZAstBuilder extends ZParserBaseVisitor<AstNode>
         {
             Expression value = initialValue(initializer);
 
-            if (value == null)
+            // A broken value was already reported: the attribute still exists.
+            if (value != null)
             {
-                return null;
+                initializers.add(new Assignment(attributeOf(name, ctx), value, line(ctx), column(ctx)));
             }
-            initializers.add(new Assignment(attributeOf(name, ctx), value, line(ctx), column(ctx)));
         }
-        return new StructField(name, baseType(ctx.tipo()), array, size, line(ctx), column(ctx));
+        return new StructField(name, baseType(ctx.tipo()), rank, size, line(ctx), column(ctx));
     }
 
     /** this.name, reached through the object even where a parameter has the same name. */
@@ -258,7 +304,7 @@ public class ZAstBuilder extends ZParserBaseVisitor<AstNode>
         {
             return null;
         }
-        return new Parameter(ctx.ID().getText(), baseType(ctx.tipo()), rank(ctx.tipo()) > 0,
+        return new Parameter(ctx.ID().getText(), baseType(ctx.tipo()), rank(ctx.tipo()) > 0, false,
                 line(ctx), column(ctx));
     }
 
@@ -308,12 +354,9 @@ public class ZAstBuilder extends ZParserBaseVisitor<AstNode>
             return array(name, type, rank, initializer, ctx);
         }
 
+        // A broken value was already reported: the variable is still declared, or every use cascades.
         Expression value = initializer == null ? null : initialValue(initializer);
 
-        if (initializer != null && value == null)
-        {
-            return null;
-        }
         return new VariableDeclaration(name, type, value, line(ctx), column(ctx));
     }
 
@@ -323,10 +366,13 @@ public class ZAstBuilder extends ZParserBaseVisitor<AstNode>
         List<Expression> dimensions = new ArrayList<>();
         List<Expression> values     = new ArrayList<>();
 
+        String createdType = type;
+
+        // The declared rank stays: new int[2][3] into an int[] is reported, not taken as a matrix.
         if (initializer instanceof ZParser.InicializadorNuevoArregloContext created)
         {
-            dimensions = expressions(created.expresion());
-            rank       = Math.max(rank, created.expresion().size());
+            dimensions  = expressions(created.expresion());
+            createdType = created.tipoBase().getText();
         }
         else if (initializer instanceof ZParser.InicializadorLiteralContext literal)
         {
@@ -344,7 +390,7 @@ public class ZAstBuilder extends ZParserBaseVisitor<AstNode>
         {
             return null;
         }
-        return new ArrayDeclaration(name, dimensions, rank, type, values, line(ctx), column(ctx));
+        return new ArrayDeclaration(name, dimensions, rank, type, values, createdType, line(ctx), column(ctx));
     }
 
     /** Java takes the size of every dimension from the literal: the first row of each level. */
@@ -402,7 +448,10 @@ public class ZAstBuilder extends ZParserBaseVisitor<AstNode>
         return values;
     }
 
-    /** "x op= e" is "x = x op e": the target is built twice, one node per use. */
+    /**
+     * "x op= e" is "x = x op e" with ONE x: the operation shares the target node,
+     * so x[i++] += e evaluates its index once, as Java does.
+     */
     @Override
     public AstNode visitAsignacion(ZParser.AsignacionContext ctx)
     {
@@ -417,7 +466,7 @@ public class ZAstBuilder extends ZParserBaseVisitor<AstNode>
         {
             String operator = ctx.op.getText().substring(0, 1);
 
-            value = new BinaryExpression(expression(ctx.destino()), operator, value, line(ctx), column(ctx));
+            value = new BinaryExpression(target, operator, value, line(ctx), column(ctx));
         }
         return new Assignment(target, value, line(ctx), column(ctx));
     }
@@ -901,19 +950,6 @@ public class ZAstBuilder extends ZParserBaseVisitor<AstNode>
     private static int rank(ZParser.TipoContext ctx)
     {
         return ctx.COR_IZQ().size();
-    }
-
-    /** The size of new int[5] when it is a literal; -1 otherwise. */
-    private static int constant(ZParser.ExpresionContext ctx)
-    {
-        try
-        {
-            return Integer.parseInt(ctx.getText());
-        }
-        catch (NumberFormatException notConstant)
-        {
-            return -1;
-        }
     }
 
     private static void add(List<AstNode> target, AstNode node)

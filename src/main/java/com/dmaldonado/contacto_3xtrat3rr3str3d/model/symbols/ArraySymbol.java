@@ -21,6 +21,8 @@ public class ArraySymbol extends Symbol
     private final List<Integer> dimensions;
     private final int           valueCount;
     private final String        elementStructName;
+    /** Assigned a whole other array: its declared sizes no longer say how long it is. */
+    private boolean             rebound;
 
     public ArraySymbol(String name, DataType elementType, String typeText, String scopeName,
                        List<Integer> dimensions, int valueCount, String elementStructName,
@@ -46,6 +48,16 @@ public class ArraySymbol extends Symbol
     public String getElementStructName()
     {
         return elementStructName;
+    }
+
+    public void markRebound()
+    {
+        rebound = true;
+    }
+
+    public boolean isRebound()
+    {
+        return rebound;
     }
 
     @Override

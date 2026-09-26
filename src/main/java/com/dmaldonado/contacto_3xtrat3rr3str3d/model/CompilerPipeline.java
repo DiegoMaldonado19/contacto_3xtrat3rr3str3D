@@ -96,6 +96,27 @@ public class CompilerPipeline
      */
     public CompilationResult compile(String source, Path sourcePath)
     {
+        try
+        {
+            return compileSource(source, sourcePath);
+        }
+        catch (StackOverflowError error)
+        {
+            // Each nesting level is one more level of recursion in the parser and in every tree walk.
+            LOGGER.log(Level.WARNING, "Programa demasiado anidado para analizarlo", error);
+
+            ErrorManager errorManager = new ErrorManager();
+
+            errorManager.setSource(sourcePath == null ? "" : sourcePath.getFileName().toString());
+            errorManager.addSyntactic("El programa anida demasiadas expresiones o instrucciones para "
+                    + "analizarlo: divida la expresion mas larga en varias.", "", 1, 1);
+            return new CompilationResult(null, new SymbolTable(), List.of(), errorManager.getErrors(),
+                    List.of(), "");
+        }
+    }
+
+    private CompilationResult compileSource(String source, Path sourcePath)
+    {
         ErrorManager errorManager = new ErrorManager();
         SymbolTable  symbolTable  = new SymbolTable();
         String       fileName     = sourcePath == null ? "" : sourcePath.getFileName().toString();
@@ -118,15 +139,12 @@ public class CompilerPipeline
         List<Unit> units = loadImports(root.ast(), sourcePath, errorManager);
         units.add(new Unit(fileName, root.ast()));
 
-        // Un .z no tiene import: como las clases de un paquete de Java, ve a
-        // las demas clases de su carpeta. Solo se registran, y sus errores son
-        // de su propia compilacion, no de esta.
-        if (language == Language.Z)
+        // Un import que no paso de su lexer no declara nada: analizar el resto
+        // reportaria cada uso de lo que declaraba como inexistente.
+        if (errorManager.hasErrorsOf(ErrorType.LEXICAL))
         {
-            for (Program sibling : siblingClasses(sourcePath))
-            {
-                new SemanticAnalyzer(new ErrorManager(), symbolTable).register(sibling);
-            }
+            return new CompilationResult(root.ast(), symbolTable, root.steps(), errorManager.getErrors(),
+                    List.of(), "");
         }
 
         // Dos pasadas sobre TODOS los archivos: primero se registra lo que cada
@@ -147,6 +165,18 @@ public class CompilerPipeline
                 analyzer.register(unit.ast());
                 return null;
             }, errorManager);
+        }
+
+        // Un .z no tiene import: como las clases de un paquete de Java, ve a
+        // las demas clases de su carpeta. Solo se registran, y sus errores son
+        // de su propia compilacion, no de esta. Van despues del archivo: si un
+        // vecino mal nombrado repite su clase, la del archivo es la que queda.
+        if (language == Language.Z)
+        {
+            for (Program sibling : siblingClasses(sourcePath))
+            {
+                new SemanticAnalyzer(new ErrorManager(), symbolTable).register(sibling);
+            }
         }
         for (int i = 0; i < units.size(); i++)
         {
@@ -260,6 +290,9 @@ public class CompilerPipeline
                 case "CARACTER_SIN_CERRAR"        -> "Caracter sin cerrar: falta la comilla simple final.";
                 case "COMENTARIO_SIN_CERRAR"      -> "Comentario de bloque sin cerrar: falta '*/'.";
                 case "COMENTARIO_HASH_SIN_CERRAR" -> "Comentario de bloque sin cerrar: falta '##'.";
+                case "CARACTER_LARGO"             -> "Un caracter lleva un solo simbolo: un texto va entre comillas dobles.";
+                case "SANGRIA_INVALIDA"           -> "La sangria no coincide con la de ningun bloque abierto.";
+                case "CARACTER_MAL_FORMADO"       -> "Caracter vacio o escape invalido: validos \\n \\t \\r \\' \\\" \\\\.";
                 case "CARACTER_INVALIDO"          -> "Simbolo no reconocido por el lenguaje.";
                 default                           -> null;
             };
@@ -359,11 +392,12 @@ public class CompilerPipeline
                 continue;
             }
 
-            String source = file.getFileName().toString();
+            // Its path, not just its name: a.Funciones.y and b.Funciones.y are two files.
+            String source = declaration.getRelativePath();
 
             errorManager.setSource(source);
             Program program = parse(content, language, errorManager).ast();
-            checkClassName(program, source, errorManager);
+            checkClassName(program, file.getFileName().toString(), errorManager);
             errorManager.setSource(rootSource);
 
             if (program != null)

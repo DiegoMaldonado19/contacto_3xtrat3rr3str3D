@@ -27,18 +27,24 @@ public final class CEmitter
 
     /** The natives take and return C values, as Docs/03 3.4 specifies. */
     private static final String RUNTIME = """
+            #include <float.h>
+            #include <stdint.h>
             #include <stdio.h>
             #include <stdlib.h>
             #include <string.h>
 
-            #define MEMORY_SIZE  100000
+            #define MEMORY_SIZE   100000
             /* Ningun marco llega a ese tamano: el chequeo del stack deja ese margen. */
-            #define FRAME_MARGIN 1000
+            #define FRAME_MARGIN  1000
+            /* Cada llamada del programa tambien es una llamada de C, con sus temporales en el
+               stack de C: se detiene antes de agotar los 8 MB que Linux le da por defecto. */
+            #define C_STACK_LIMIT (7 * 1024 * 1024)
 
             float stack[MEMORY_SIZE];   /* marcos de las funciones; P es la base del actual   */
             float heap[MEMORY_SIZE];    /* cadenas, arreglos y estructuras; H, la celda libre */
             float P;
             float H;
+            uintptr_t stackBase;        /* donde empezaba el stack de C al entrar a main       */
 
             /* ------------------------------------------------------------------
              * Nativas: el lenguaje las usa sin declararlas. Una cadena es una
@@ -47,7 +53,11 @@ public final class CEmitter
 
             void checkMemory(void)
             {
-                if (H > MEMORY_SIZE || P + FRAME_MARGIN > MEMORY_SIZE)
+                char      here;
+                uintptr_t current = (uintptr_t) &here;
+                uintptr_t used    = stackBase > current ? stackBase - current : current - stackBase;
+
+                if (H > MEMORY_SIZE || P + FRAME_MARGIN > MEMORY_SIZE || used > C_STACK_LIMIT)
                 {
                     printf("\\nError: memoria agotada (stack o heap).\\n");
                     exit(1);
@@ -60,6 +70,39 @@ public final class CEmitter
                 if (pointer == 0)
                 {
                     printf("\\nError: referencia nula (objeto o arreglo sin crear).\\n");
+                    exit(1);
+                }
+            }
+
+            /* Un arreglo guarda su largo en la celda anterior a la primera: salirse de el detiene el programa.
+               En una matriz es la celda aplanada, revisada despues de cada indice interno. */
+            void checkIndex(float array, float index)
+            {
+                checkNull(array);
+                if (index < 0 || index >= heap[(int) array - 1])
+                {
+                    printf("\\nError: posicion %d fuera de un arreglo de %d posiciones.\\n", (int) index,
+                           (int) heap[(int) array - 1]);
+                    exit(1);
+                }
+            }
+
+            void checkBound(float index, float size)
+            {
+                if (index < 0 || index >= size)
+                {
+                    printf("\\nError: indice %d fuera de una dimension de %d posiciones.\\n", (int) index,
+                           (int) size);
+                    exit(1);
+                }
+            }
+
+            /* Un tamano negativo haria retroceder a H sobre lo que ya vive en el heap. */
+            void checkSize(float size)
+            {
+                if (size < 0)
+                {
+                    printf("\\nError: tamano de arreglo negativo (%d).\\n", (int) size);
                     exit(1);
                 }
             }
@@ -149,9 +192,39 @@ public final class CEmitter
                 printf("%d", (int) value);
             }
 
+            /* Un decimal con las cifras que su float guarda, sin exponente: 12345.75, 0.1, 2.0. */
+            void floatText(float value, char *text, size_t size)
+            {
+                if (value != value || value > FLT_MAX || value < -FLT_MAX)
+                {
+                    snprintf(text, size, "%s", value != value ? "NaN" : value > 0 ? "Infinity" : "-Infinity");
+                    return;
+                }
+                for (int decimals = 1; decimals <= 9; decimals++)
+                {
+                    snprintf(text, size, "%.*f", decimals, value);
+                    if ((float) strtod(text, NULL) == value)
+                    {
+                        return;
+                    }
+                }
+                /* Lo muy pequeno no cabe en 9 decimales: con exponente. */
+                for (int digits = 1; digits <= 9; digits++)
+                {
+                    snprintf(text, size, "%.*g", digits, value);
+                    if ((float) strtod(text, NULL) == value)
+                    {
+                        return;
+                    }
+                }
+            }
+
             void printFloat(float value)
             {
-                printf("%g", value);
+                char text[64];
+
+                floatText(value, text, sizeof text);
+                fputs(text, stdout);
             }
 
             void printChar(float value)
@@ -180,7 +253,7 @@ public final class CEmitter
                 putchar('\\n');
             }
 
-            /* Lo que no es un numero se descarta: si no, se quedaria atascado y toda lectura siguiente fallaria. */
+            /* Lo que no cupo en el buffer se descarta: si no, seria la siguiente lectura. */
             void discardLine(void)
             {
                 int character;
@@ -192,50 +265,82 @@ public final class CEmitter
                 while (character != '\\n' && character != EOF);
             }
 
-            float readInt(void)
+            /* Cada lectura toma una linea completa, aunque este en blanco: lo que sobre de ella no pasa a la siguiente. */
+            void readLine(char *text, int size)
             {
-                int value = 0;
+                size_t length;
 
-                if (scanf("%d", &value) != 1)
+                if (fgets(text, size, stdin) == NULL)
                 {
-                    value = 0;
+                    text[0] = '\\0';
+                    return;
+                }
+                length = strcspn(text, "\\r\\n");
+                if (text[length] == '\\0' && !feof(stdin))
+                {
                     discardLine();
                 }
-                return (float) value;
+                text[length] = '\\0';
+            }
+
+            /* Lo que no es un numero lee 0. */
+            float readInt(void)
+            {
+                char text[1024];
+
+                readLine(text, sizeof text);
+                return (float) strtol(text, NULL, 10);
             }
 
             float readFloat(void)
             {
-                float value = 0;
+                char text[1024];
 
-                if (scanf("%f", &value) != 1)
-                {
-                    value = 0;
-                    discardLine();
-                }
-                return value;
+                readLine(text, sizeof text);
+                return (float) strtod(text, NULL);
             }
 
+            /* El primer simbolo de la linea, decodificado de UTF-8: una ñ es un solo caracter. */
             float readChar(void)
             {
-                char value = 0;
+                char           text[1024];
+                unsigned char *first;
+                int            extra;
+                int            code;
 
-                if (scanf(" %c", &value) != 1)
+                readLine(text, sizeof text);
+                first = (unsigned char *) text + strspn(text, " \\t");
+                extra = *first >= 0xF0 ? 3 : *first >= 0xE0 ? 2 : *first >= 0xC0 ? 1 : 0;
+                code  = extra == 0 ? *first : *first & (0x3F >> extra);
+
+                for (int i = 1; i <= extra && first[i] != '\\0'; i++)
                 {
-                    value = 0;
+                    code = (code << 6) | (first[i] & 0x3F);
                 }
-                return (unsigned char) value;
+                return (float) code;
             }
 
-            /* Una linea completa: el espacio del formato salta el salto que dejo una lectura anterior. */
+            /* verum, verdadero o true (la palabra de cualquiera de los tres lenguajes), o un numero no 0. */
+            float readBool(void)
+            {
+                char text[1024];
+
+                readLine(text, sizeof text);
+                for (int i = 0; i < 3; i++)
+                {
+                    if (strcmp(text, TRUE_WORDS[i]) == 0)
+                    {
+                        return 1;
+                    }
+                }
+                return strtol(text, NULL, 10) != 0;
+            }
+
             float readString(void)
             {
                 char text[1024];
 
-                if (scanf(" %1023[^\\n]", text) != 1)
-                {
-                    text[0] = '\\0';
-                }
+                readLine(text, sizeof text);
                 return textFromBytes(text);
             }
 
@@ -273,6 +378,11 @@ public final class CEmitter
                 int i = (int) left;
                 int j = (int) right;
 
+                /* null (0) solo es igual a null: "" es otra cadena. */
+                if (left == 0 || right == 0)
+                {
+                    return left == right;
+                }
                 while (heap[i] != -1 && heap[i] == heap[j])
                 {
                     i++;
@@ -291,9 +401,9 @@ public final class CEmitter
 
             float floatToString(float value)
             {
-                char text[32];
+                char text[64];
 
-                snprintf(text, sizeof text, "%g", value);
+                floatText(value, text, sizeof text);
                 return textFromBytes(text);
             }
 
@@ -370,10 +480,19 @@ public final class CEmitter
         c.append('\n').append("main".equals(name) ? "int main(void)" : "void " + name + "(void)")
          .append("\n{\n");
 
+        if ("main".equals(name))
+        {
+            c.append("    char base;\n");
+        }
         if (!temporaries.isEmpty())
         {
-            c.append("    float ").append(String.join(", ", temporaries)).append(";\n\n");
+            c.append("    float ").append(String.join(", ", temporaries)).append(";\n");
         }
+        if ("main".equals(name))
+        {
+            c.append("\n    stackBase = (uintptr_t) &base;\n");
+        }
+        c.append('\n');
 
         for (int i = 0; i < body.size(); i++)
         {
@@ -401,7 +520,9 @@ public final class CEmitter
         return switch (q.op())
         {
             case "="                                             -> q.result() + " = " + q.arg1() + ";";
-            case "+", "-", "*", "/", "<", ">", "<=", ">=", "==", "!=" ->
+            case "+", "-", "*", "/" ->
+                    q.result() + " = " + number(q.arg1()) + " " + q.op() + " " + number(q.arg2()) + ";";
+            case "<", ">", "<=", ">=", "==", "!=" ->
                     q.result() + " = " + q.arg1() + " " + q.op() + " " + q.arg2() + ";";
             case "div"     -> q.result() + " = intDivide(" + q.arg1() + ", " + q.arg2() + ");";
             case "mod"     -> q.result() + " = intModulo(" + q.arg1() + ", " + q.arg2() + ");";
@@ -425,6 +546,12 @@ public final class CEmitter
         String call      = q.op() + "(" + arguments + ");";
 
         return q.result().isEmpty() ? call : q.result() + " = " + call;
+    }
+
+    /** 65536 * 65536 would be int arithmetic in C, and overflow: every value is a float, constants too. */
+    private static String number(String operand)
+    {
+        return INTEGER.matcher(operand).matches() ? operand + ".0f" : operand;
     }
 
     /** An array subscript has to be an int in C; a constant already is one. */

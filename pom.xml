@@ -57,6 +57,12 @@
                 <version>0.0.8</version>
                 <configuration>
                     <mainClass>com.dmaldonado.contacto_3xtrat3rr3str3d.App</mainClass>
+                    <!-- JavaFX 21 on a newer JDK: native access and Marlin's sun.misc.Unsafe
+                         print warnings at startup. The -D form is ignored by JDK 21. -->
+                    <options>
+                        <option>--enable-native-access=javafx.graphics</option>
+                        <option>-Dsun.misc.unsafe.memory.access=allow</option>
+                    </options>
                 </configuration>
                 <executions>
                     <execution>

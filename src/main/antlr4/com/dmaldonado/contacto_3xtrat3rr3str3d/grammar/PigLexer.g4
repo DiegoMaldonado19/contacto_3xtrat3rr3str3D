@@ -82,7 +82,7 @@ PUNTO      : '.' ;
 /* ---------- 6. Literales -------------------------------------------- */
 DECIMAL   : DIGITO+ '.' DIGITO+ ;    // antes que ENTERO
 ENTERO    : DIGITO+ ;
-TEXTO     : '"' ( ESCAPE | ~["\\\r\n] )* '"' ;
+TEXTO     : '"' EN_TEXTO* '"' ;
 CARACTER  : '\'' ( ESCAPE | ~['\\\r\n] ) '\'' ;
 
 /* ---------- 7. Identificadores -------------------------------------- */
@@ -102,7 +102,9 @@ COMENTARIO_HASH   : '##' .*? '##' -> channel(HIDDEN) ;
 ESPACIOS          : [ \t\r\n\f]+  -> channel(HIDDEN) ;
 
 /* ---------- 9. Errores lexicos -------- */
-TEXTO_SIN_CERRAR      : '"'  ( ESCAPE | ~["\\\r\n] )* ;
+TEXTO_SIN_CERRAR      : '"'  EN_TEXTO* ;
+CARACTER_LARGO        : '\'' ( ESCAPE | ~['\\\r\n] ) ( ESCAPE | ~['\\\r\n] )+ '\'' ;
+CARACTER_MAL_FORMADO  : '\'' ( '\\' ~[nrt"'\\\r\n] )? '\'' ;
 CARACTER_SIN_CERRAR   : '\'' ( ESCAPE | ~['\\\r\n] )? ;
 COMENTARIO_SIN_CERRAR : '/*' ( ~'*' | '*' ~'/' )* '*'? ;
 COMENTARIO_HASH_SIN_CERRAR : '##' ( ~'#' | '#' ~'#' )* '#'? ;
@@ -112,3 +114,5 @@ CARACTER_INVALIDO     : . ;
 fragment LETRA  : [a-zA-ZáéíóúÁÉÍÓÚñÑ] ;
 fragment DIGITO : [0-9] ;
 fragment ESCAPE : '\\' [nrt"'\\] ;
+// Inside a text any escape lexes: an unknown one, as in "C:\Users", is kept as written.
+fragment EN_TEXTO : '\\' ~[\r\n] | ~["\\\r\n] ;

@@ -28,13 +28,23 @@ public class ArrayDeclaration extends AstNode
     private final DataType         elementType;
     private final List<Expression> initialValues;
 
+    /** Zetariano "new double[2]": the element type it is created with, which has to be the declared one. */
+    private final String           createdTypeText;
+
     /** The declared symbol, which knows its stack slot. Set by the semantic analyzer. */
     private Symbol symbol;
 
     public ArrayDeclaration(String name, List<Expression> dimensions, int rank, String typeText,
                             List<Expression> initialValues, int line, int column)
     {
+        this(name, dimensions, rank, typeText, initialValues, typeText, line, column);
+    }
+
+    public ArrayDeclaration(String name, List<Expression> dimensions, int rank, String typeText,
+                            List<Expression> initialValues, String createdTypeText, int line, int column)
+    {
         super(line, column);
+        this.createdTypeText = createdTypeText;
         this.name          = name;
         this.dimensions    = dimensions;
         this.rank          = rank;
@@ -62,6 +72,11 @@ public class ArrayDeclaration extends AstNode
     public String getTypeText()
     {
         return typeText;
+    }
+
+    public String getCreatedTypeText()
+    {
+        return createdTypeText;
     }
 
     public DataType getElementType()

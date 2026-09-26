@@ -29,6 +29,36 @@ options { tokenVocab = YLexer; }
     {
         return _input.LT(1).getLine() == _input.LT(-1).getLine();
     }
+
+    /**
+     * Un + o - al inicio de una linea continua la expresion de la anterior solo
+     * dentro de un ( [ { abierto, como en Python: afuera, "-b" es otra instruccion.
+     */
+    private boolean continues()
+    {
+        if (sameLine())
+        {
+            return true;
+        }
+
+        ParserRuleContext statement = _ctx;
+
+        while (!(statement instanceof InstruccionContext) && statement.getParent() != null)
+        {
+            statement = statement.getParent();
+        }
+
+        int open = 0;
+
+        for (int i = statement.getStart().getTokenIndex(); i < _input.LT(1).getTokenIndex(); i++)
+        {
+            int type = _input.get(i).getType();
+
+            open += type == PAR_IZQ || type == COR_IZQ || type == LLAVE_IZQ ? 1
+                  : type == PAR_DER || type == COR_DER || type == LLAVE_DER ? -1 : 0;
+        }
+        return open > 0;
+    }
 }
 
 /* =====================================================================
@@ -88,7 +118,15 @@ instruccion
       | instruccionContinuar
       | instruccionImprimir
       | instruccionExpresion
+      | bloqueInesperado
       ) PUNTO_COMA?
+    ;
+
+// Una linea sangrada que nada abre: se reporta una vez y el bloque se lee igual,
+// en vez de dejar que ANTLR se tope con su INDENT y luego con su DEDENT.
+bloqueInesperado
+    : kw=INDENT instruccion+ DEDENT
+      { notifyErrorListeners($kw, "Sangria inesperada: la linea anterior no abre ningun bloque.", null); }
     ;
 
 declaracionVariable
@@ -160,7 +198,8 @@ expresionOr             : expresionAnd ( OR expresionAnd )* ;
 expresionAnd            : expresionIgualdad ( AND expresionIgualdad )* ;
 expresionIgualdad       : expresionRelacional ( ( IGUALDAD | DIFERENTE ) expresionRelacional )* ;
 expresionRelacional     : expresionAditiva ( ( MENOR | MAYOR | MENOR_IGUAL | MAYOR_IGUAL ) expresionAditiva )* ;
-expresionAditiva        : expresionMultiplicativa ( ( MAS | MENOS ) expresionMultiplicativa )* ;
+// Sin fin de instruccion, "-b" en su propia linea se pegaria a la anterior: ver continues().
+expresionAditiva        : expresionMultiplicativa ( {continues()}? ( MAS | MENOS ) expresionMultiplicativa )* ;
 expresionMultiplicativa : expresionUnaria ( ( POR | DIVISION ) expresionUnaria )* ;
 
 expresionUnaria

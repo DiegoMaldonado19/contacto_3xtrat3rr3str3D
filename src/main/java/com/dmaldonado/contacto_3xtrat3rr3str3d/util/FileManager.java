@@ -1,6 +1,7 @@
 package com.dmaldonado.contacto_3xtrat3rr3str3d.util;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,16 +36,12 @@ public final class FileManager
         Files.writeString(path, content, StandardCharsets.UTF_8);
     }
 
-    /** Adds the extension when the user did not type it in the dialog. */
-    public static Path ensureExtension(Path path, String extension)
+    /** Keeps an extension the dialog allows ("utils.y" from a .pig tab); otherwise adds the default one. */
+    public static Path ensureExtension(Path path, List<String> allowed, String extension)
     {
         String name = path.getFileName().toString();
 
-        if (name.toLowerCase().endsWith("." + extension))
-        {
-            return path;
-        }
-        return path.resolveSibling(name + "." + extension);
+        return allowed.contains(extensionOf(name)) ? path : path.resolveSibling(name + "." + extension);
     }
 
     /** A folder's entries, folders first and then by name, the way a file explorer lists them. */
@@ -58,9 +55,17 @@ public final class FileManager
         }
     }
 
-    /** "Descargar" a whole folder: a copy of everything inside it, subfolders included. */
+    /**
+     * "Descargar" a whole folder: a copy of everything inside it, subfolders included.
+     * A target inside the source would be walked while it is written, copying itself forever.
+     * Files.walk reports an unreadable subfolder unchecked; it leaves as the IOException it wraps.
+     */
     public static void copyFolder(Path source, Path target) throws IOException
     {
+        if (target.toAbsolutePath().normalize().startsWith(source.toAbsolutePath().normalize()))
+        {
+            throw new IOException("La carpeta no se puede descargar dentro de si misma: elija otro destino.");
+        }
         try (Stream<Path> paths = Files.walk(source))
         {
             for (Path path : (Iterable<Path>) paths::iterator)
@@ -77,16 +82,9 @@ public final class FileManager
                 }
             }
         }
-    }
-
-    /** The first file with that name under a folder; null when there is none. */
-    public static Path find(Path folder, String fileName) throws IOException
-    {
-        try (Stream<Path> paths = Files.walk(folder))
+        catch (UncheckedIOException exception)
         {
-            return paths.filter(path -> path.getFileName().toString().equals(fileName))
-                        .findFirst()
-                        .orElse(null);
+            throw exception.getCause();
         }
     }
 

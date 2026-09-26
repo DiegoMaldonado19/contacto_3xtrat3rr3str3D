@@ -12,10 +12,15 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.view.MainView;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.TableRow;
 import javafx.scene.control.TreeItem;
+import javafx.scene.control.TreeView;
 import javafx.stage.Stage;
 import org.fxmisc.richtext.CodeArea;
 
@@ -67,6 +72,18 @@ public class ApplicationController
         view.getExportTreeButton().setOnAction(event -> exportTree());
         view.getEditorTabs().getSelectionModel().selectedItemProperty()
                 .addListener((observable, previous, current) -> showFileName());
+
+        // Closing the window must not lose unsaved edits any more than closing one tab does.
+        stage.setOnCloseRequest(event ->
+        {
+            if (view.getEditors().stream().anyMatch(EditorTab::isModified)
+                    && new Alert(Alert.AlertType.CONFIRMATION,
+                            "Hay archivos con cambios sin guardar. Salir de todos modos?")
+                            .showAndWait().filter(ButtonType.OK::equals).isEmpty())
+            {
+                event.consume();
+            }
+        });
 
         // Doble clic en un error lleva el cursor hasta el, aunque este en un archivo importado.
         view.getErrorTable().setRowFactory(table ->
@@ -180,38 +197,20 @@ public class ApplicationController
     }
 
     /**
-     * The tab of the file an error names: the compiled one, one already open,
-     * or an import found on disk under the compiled file's folder, which gets
-     * opened. The error only carries the file name.
+     * The tab of the file an error names, opened again if it was closed: the
+     * compiled one, or an import, whose source is its path relative to the
+     * compiled file's folder.
      */
-    private EditorTab editorOf(String fileName)
+    private EditorTab editorOf(String source)
     {
-        if (compiled == null || fileName.isEmpty() || fileName.equals(compiled.getFileName()))
+        if (compiled == null || compiled.getPath() == null)
         {
-            return compiled;
+            return source.isEmpty() ? compiled : null;
         }
-        for (EditorTab editor : view.getEditors())
-        {
-            if (editor.getFileName().equals(fileName))
-            {
-                return editor;
-            }
-        }
-        if (compiled.getPath() == null)
-        {
-            return null;
-        }
-        try
-        {
-            Path file = FileManager.find(compiled.getPath().toAbsolutePath().getParent(), fileName);
 
-            return file == null ? null : openFile(file);
-        }
-        catch (IOException exception)
-        {
-            LOGGER.log(Level.SEVERE, "No se pudo buscar el archivo " + fileName, exception);
-            return null;
-        }
+        boolean root = source.isEmpty() || source.equals(compiled.getFileName());
+
+        return openFile(root ? compiled.getPath() : compiled.getPath().toAbsolutePath().getParent().resolve(source));
     }
 
     private void moveCaret(EditorTab editor, int line, int column)
@@ -345,9 +344,17 @@ public class ApplicationController
         if (renamed)
         {
             String content = editor.getCodeArea().getText();
+            Path   file    = saved.toAbsolutePath().normalize();
 
-            view.getEditorTabs().getTabs().remove(editor);
-            view.openEditor(saved.toAbsolutePath().normalize(), content);
+            // A tab already open on that file holds what the disk no longer has.
+            view.getEditorTabs().getTabs().removeIf(tab -> tab == editor || file.equals(((EditorTab) tab).getPath()));
+
+            EditorTab reopened = view.openEditor(file, content);
+
+            if (compiled == editor)
+            {
+                compiled = reopened;
+            }
         }
         else
         {
@@ -416,6 +423,10 @@ public class ApplicationController
         }
     }
 
+    /**
+     * Rebuilt from disk, keeping open the folders that were open and selected
+     * the entry that was: "Nuevo archivo" creates where the selection points.
+     */
     private void refreshWorkspace()
     {
         if (workspace == null)
@@ -423,23 +434,40 @@ public class ApplicationController
             return;
         }
 
-        TreeItem<Path> root = treeOf(workspace);
+        TreeView<Path> tree     = view.getWorkspaceTree();
+        TreeItem<Path> selected = tree.getSelectionModel().getSelectedItem();
+        Set<Path>      expanded = new HashSet<>(Set.of(workspace));
 
-        root.setExpanded(true);
-        view.showWorkspace(root);
+        for (int row = 0; row < tree.getExpandedItemCount(); row++)
+        {
+            if (tree.getTreeItem(row).isExpanded())
+            {
+                expanded.add(tree.getTreeItem(row).getValue());
+            }
+        }
+        view.showWorkspace(treeOf(workspace, expanded));
+
+        for (int row = 0; selected != null && row < tree.getExpandedItemCount(); row++)
+        {
+            if (tree.getTreeItem(row).getValue().equals(selected.getValue()))
+            {
+                tree.getSelectionModel().select(row);
+            }
+        }
     }
 
-    private static TreeItem<Path> treeOf(Path path)
+    private static TreeItem<Path> treeOf(Path path, Set<Path> expanded)
     {
         TreeItem<Path> item = new TreeItem<>(path);
 
+        item.setExpanded(expanded.contains(path));
         if (Files.isDirectory(path))
         {
             try
             {
                 for (Path child : FileManager.list(path))
                 {
-                    item.getChildren().add(treeOf(child));
+                    item.getChildren().add(treeOf(child, expanded));
                 }
             }
             catch (IOException exception)

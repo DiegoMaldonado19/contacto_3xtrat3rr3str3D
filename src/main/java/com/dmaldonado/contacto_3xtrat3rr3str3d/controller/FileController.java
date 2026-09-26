@@ -6,6 +6,7 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.view.EditorTab;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.logging.Level;
@@ -41,8 +42,11 @@ public class FileController
 
     public Path chooseFile()
     {
-        return remember(toPath(chooser("Abrir archivo fuente", SOURCES, Constants.SOURCE_EXTENSIONS)
-                .showOpenDialog(owner)));
+        FileChooser chooser = chooser("Abrir archivo fuente", SOURCES, Constants.SOURCE_EXTENSIONS);
+
+        // The assistant's test files are PigLatin saved as .lat.
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Todos los archivos (*.*)", "*.*"));
+        return remember(toPath(chooser.showOpenDialog(owner)));
     }
 
     public Path chooseFolder(String title)
@@ -111,15 +115,12 @@ public class FileController
     /** A new empty file inside the folder, named by the user. */
     public Path newFile(Path folder)
     {
-        String name = askName("Nuevo archivo", "Nombre del archivo (.pig, .y o .z):", "nuevo.pig");
+        Path file = askPath(folder, "Nuevo archivo", "Nombre del archivo (.pig, .y o .z):", "nuevo.pig");
 
-        if (name == null)
+        if (file == null)
         {
             return null;
         }
-
-        Path file = folder.resolve(name);
-
         if (Files.exists(file))
         {
             report("Ya existe", file, new IOException(file.getFileName() + " ya existe en la carpeta."));
@@ -130,15 +131,12 @@ public class FileController
 
     public Path newFolder(Path parent)
     {
-        String name = askName("Nueva carpeta", "Nombre de la carpeta:", "carpeta");
+        Path folder = askPath(parent, "Nueva carpeta", "Nombre de la carpeta:", "carpeta");
 
-        if (name == null)
+        if (folder == null)
         {
             return null;
         }
-
-        Path folder = parent.resolve(name);
-
         try
         {
             return Files.createDirectories(folder);
@@ -160,7 +158,9 @@ public class FileController
             return null;
         }
 
-        Path copy = destination.resolve(workspace.getFileName().toString());
+        // A drive root (E:\) has no name of its own.
+        Path copy = destination.resolve(workspace.getFileName() == null ? "carpeta"
+                : workspace.getFileName().toString());
 
         try
         {
@@ -174,7 +174,8 @@ public class FileController
         }
     }
 
-    private String askName(String title, String prompt, String suggestion)
+    /** The name the user types, inside the folder; null when cancelled or not a valid name ("Y?" on Windows). */
+    private Path askPath(Path folder, String title, String prompt, String suggestion)
     {
         TextInputDialog dialog = new TextInputDialog(suggestion);
 
@@ -183,7 +184,21 @@ public class FileController
         dialog.setHeaderText(null);
         dialog.setContentText(prompt);
 
-        return dialog.showAndWait().map(String::trim).filter(name -> !name.isEmpty()).orElse(null);
+        String name = dialog.showAndWait().map(String::trim).filter(typed -> !typed.isEmpty()).orElse(null);
+
+        if (name == null)
+        {
+            return null;
+        }
+        try
+        {
+            return folder.resolve(name);
+        }
+        catch (InvalidPathException exception)
+        {
+            report("Nombre no valido", folder, new IOException(exception.getMessage(), exception));
+            return null;
+        }
     }
 
     private Path chooseDestination(String title, String description, List<String> extensions,
@@ -191,7 +206,7 @@ public class FileController
     {
         Path selected = toPath(chooser(title, description, extensions).showSaveDialog(owner));
 
-        return selected == null ? null : remember(FileManager.ensureExtension(selected, extension));
+        return selected == null ? null : remember(FileManager.ensureExtension(selected, extensions, extension));
     }
 
     private FileChooser chooser(String title, String description, List<String> extensions)

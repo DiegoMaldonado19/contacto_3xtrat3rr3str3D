@@ -7,6 +7,7 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.BreakStatemen
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.CaseClause;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.ContinueStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.DoWhileStatement;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.ForStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.IfStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.ReturnStatement;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.model.ast.statement.SwitchStatement;
@@ -21,6 +22,8 @@ import java.util.List;
  * Static and conservative: it never executes anything, it only looks at the
  * SHAPE of the AST. When in doubt it answers "does not always return", which
  * makes it report a possible problem rather than stay silent about a real one.
+ * The one exception is a loop on a literal verum: it can only be left through
+ * a reddere or its own interrumpe.
  *
  * The aliter chain needs no special case here: phase 1 desugars it into nested
  * IfStatement nodes, so the elseBranch of an if is simply another if and the
@@ -35,48 +38,103 @@ public final class ReturnPathChecker
     /** Does this node guarantee a reddere on EVERY execution path? */
     public static boolean alwaysReturns(AstNode node)
     {
-        if (node == null)
+        return !completesNormally(node);
+    }
+
+    /**
+     * Java's rule: can execution run past the end of this node? A reddere,
+     * interrumpe or perge cannot; a loop whose condition is literally verum
+     * (or missing) only can through an interrumpe of its own; a switch falls
+     * through its cases, so without a break it ends where its last case ends.
+     */
+    private static boolean completesNormally(AstNode node)
+    {
+        if (node instanceof ReturnStatement || node instanceof BreakStatement
+                || node instanceof ContinueStatement)
         {
             return false;
         }
-        if (node instanceof ReturnStatement)
-        {
-            return true;
-        }
         if (node instanceof Block block)
         {
-            return block.getStatements().stream().anyMatch(ReturnPathChecker::alwaysReturns);
+            return block.getStatements().stream().allMatch(ReturnPathChecker::completesNormally);
         }
         if (node instanceof IfStatement ifStatement)
         {
-            // Only guaranteed when there IS an aliter and BOTH branches return.
-            return ifStatement.getElseBranch() != null
-                && alwaysReturns(ifStatement.getThenBranch())
-                && alwaysReturns(ifStatement.getElseBranch());
-        }
-        if (node instanceof DoWhileStatement doWhile)
-        {
-            return alwaysReturns(doWhile.getBody());   // facere runs at least once
+            return ifStatement.getElseBranch() == null
+                || completesNormally(ifStatement.getThenBranch())
+                || completesNormally(ifStatement.getElseBranch());
         }
         if (node instanceof WhileStatement whileStatement)
         {
-            // dum / per guarantee nothing, unless the condition is literally verum.
-            return isAlwaysTrue(whileStatement.getCondition())
-                && alwaysReturns(whileStatement.getBody());
+            return !isAlwaysTrue(whileStatement.getCondition()) || breaksOut(whileStatement.getBody());
+        }
+        if (node instanceof ForStatement forStatement)
+        {
+            return forStatement.getCondition() != null && !isAlwaysTrue(forStatement.getCondition())
+                || breaksOut(forStatement.getBody());
+        }
+        if (node instanceof DoWhileStatement doWhile)
+        {
+            // perge jumps to the condition, which may be false.
+            return !isAlwaysTrue(doWhile.getCondition())
+                    && (completesNormally(doWhile.getBody()) || continues(doWhile.getBody()))
+                || breaksOut(doWhile.getBody());
         }
         if (node instanceof SwitchStatement switchStatement)
         {
-            // Every case returning covers fallthrough too; without siempre a
-            // value may match no case at all.
-            return switchStatement.getCases().stream().anyMatch(CaseClause::isDefault)
-                && switchStatement.getCases().stream().allMatch(clause -> alwaysReturns(clause.getBody()));
+            List<CaseClause> cases = switchStatement.getCases();
+
+            // Without siempre a value may match no case at all.
+            return cases.stream().noneMatch(CaseClause::isDefault)
+                || cases.stream().anyMatch(clause -> breaksOut(clause.getBody()))
+                || completesNormally(cases.get(cases.size() - 1).getBody());
         }
-        return false;
+        return true;
     }
 
     private static boolean isAlwaysTrue(AstNode condition)
     {
         return condition instanceof LiteralExpression literal && literal.isTrue();
+    }
+
+    /** An interrumpe that leaves THIS loop or switch: one inside a nested loop or switch leaves that one. */
+    private static boolean breaksOut(AstNode node)
+    {
+        return node instanceof BreakStatement
+            || node != null && !isLoop(node) && !(node instanceof SwitchStatement)
+               && reachableChildren(node).stream().anyMatch(ReturnPathChecker::breaksOut);
+    }
+
+    /** A perge of THIS loop: a switch does not catch it, a nested loop does. */
+    private static boolean continues(AstNode node)
+    {
+        return node instanceof ContinueStatement
+            || node != null && !isLoop(node) && reachableChildren(node).stream().anyMatch(ReturnPathChecker::continues);
+    }
+
+    /** "reddere 1; interrumpe;": what follows a statement that cannot complete normally never runs. */
+    private static List<AstNode> reachableChildren(AstNode node)
+    {
+        if (!(node instanceof Block block))
+        {
+            return node.getChildren();
+        }
+
+        List<AstNode> statements = block.getStatements();
+
+        for (int i = 0; i < statements.size(); i++)
+        {
+            if (!completesNormally(statements.get(i)))
+            {
+                return statements.subList(0, i + 1);
+            }
+        }
+        return statements;
+    }
+
+    private static boolean isLoop(AstNode node)
+    {
+        return node instanceof WhileStatement || node instanceof DoWhileStatement || node instanceof ForStatement;
     }
 
     /**

@@ -43,6 +43,11 @@ public final class TypeSystem
                     ? DataType.ERROR : DataType.NUMERUS;
         }
 
+        // Two littera make a numerus, as in Java: 'a' + 'b' is 195, not a character.
+        if (left == DataType.LITTERA && right == DataType.LITTERA)
+        {
+            return DataType.NUMERUS;
+        }
         // Highest rank wins: littera < numerus < decimalis
         return left.getRank() >= right.getRank() ? left : right;
     }
@@ -53,8 +58,10 @@ public final class TypeSystem
     {
         boolean isEquality = "==".equals(operator) || "!=".equals(operator);
 
-        // Objects compare by identity, and against null: p1 == null, p1 != p2.
-        if (isEquality && isReference(left) && isReference(right))
+        // Objects compare by identity, and anything that may hold null against it: p1 != p2, s == null.
+        if (isEquality && (isReference(left) && isReference(right)
+                || left == DataType.NULO && isAssignable(right, DataType.NULO)
+                || right == DataType.NULO && isAssignable(left, DataType.NULO)))
         {
             return DataType.BOOLEANO;
         }
@@ -95,8 +102,13 @@ public final class TypeSystem
         return operand == DataType.BOOLEANO ? DataType.BOOLEANO : DataType.ERROR;
     }
 
+    /** -'a' is a number, not a character: there is no negative character. */
     public static DataType unaryMinusResult(DataType operand)
     {
+        if (operand == DataType.LITTERA)
+        {
+            return DataType.NUMERUS;
+        }
         return operand.isNumeric() ? operand : DataType.ERROR;
     }
 

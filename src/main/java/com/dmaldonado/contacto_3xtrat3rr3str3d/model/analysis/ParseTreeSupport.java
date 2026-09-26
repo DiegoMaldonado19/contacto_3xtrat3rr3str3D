@@ -48,6 +48,19 @@ final class ParseTreeSupport
         return false;
     }
 
+    /** The value of a size written as a literal; -1 when it is not one, or does not fit an int. */
+    static int constant(ParseTree node)
+    {
+        try
+        {
+            return Integer.parseInt(node.getText());
+        }
+        catch (NumberFormatException notConstant)
+        {
+            return -1;
+        }
+    }
+
     /**
      * Every precedence rule has the shape  A : B (op B)* , so one method folds
      * them all, LEFT associative:  a - b - c => ((a - b) - c).

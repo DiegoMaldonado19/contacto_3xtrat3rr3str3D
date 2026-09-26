@@ -1,6 +1,7 @@
 package com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis;
 
 import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.column;
+import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.constant;
 import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.fold;
 import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.line;
 import static com.dmaldonado.contacto_3xtrat3rr3str3d.model.analysis.ParseTreeSupport.missing;
@@ -135,7 +136,7 @@ public class YAstBuilder extends YParserBaseVisitor<AstNode>
             return null;
         }
         return new StructField(ctx.ID().getText(), ctx.tipo().getText(), array,
-                array ? Integer.parseInt(ctx.ENTERO().getText()) : -1, line(ctx), column(ctx));
+                array ? constant(ctx.ENTERO()) : -1, line(ctx), column(ctx));
     }
 
     /* =================================================================
@@ -156,7 +157,7 @@ public class YAstBuilder extends YParserBaseVisitor<AstNode>
                 List.of(), body, returnsValue, line(ctx), column(ctx));
     }
 
-    /** "[] entero a" marks an array; "{} Persona p" needs no mark: the type already says structure. */
+    /** "[] entero a" marks an array and "{} Persona p" a structure; the semantic pass checks the pair. */
     @Override
     public AstNode visitParametro(YParser.ParametroContext ctx)
     {
@@ -164,12 +165,34 @@ public class YAstBuilder extends YParserBaseVisitor<AstNode>
         {
             return null;
         }
-        return new Parameter(ctx.ID().getText(), ctx.tipo().getText(), ctx.COR_IZQ() != null,
+        return new Parameter(ctx.ID().getText(), ctx.tipo().getText(), ctx.COR_IZQ() != null, ctx.LLAVE_IZQ() != null,
                 line(ctx), column(ctx));
     }
 
     @Override
     public AstNode visitBloque(YParser.BloqueContext ctx)
+    {
+        List<AstNode> statements = new ArrayList<>();
+
+        for (YParser.InstruccionContext statement : ctx.instruccion())
+        {
+            AstNode built = visit(statement);
+
+            if (statement.bloqueInesperado() != null && built instanceof Block stray)
+            {
+                statements.addAll(stray.getStatements());
+            }
+            else
+            {
+                add(statements, built);
+            }
+        }
+        return new Block(statements, line(ctx), column(ctx));
+    }
+
+    /** A stray indented block was reported by the parser; its statements stay in the enclosing one. */
+    @Override
+    public AstNode visitBloqueInesperado(YParser.BloqueInesperadoContext ctx)
     {
         List<AstNode> statements = new ArrayList<>();
 
@@ -214,12 +237,13 @@ public class YAstBuilder extends YParserBaseVisitor<AstNode>
     {
         Expression value = expression(ctx.expresion());
 
-        if (missing(ctx.ID(), ctx.tipo()) || broken(ctx.expresion(), value))
+        if (missing(ctx.ID(), ctx.tipo()))
         {
             return null;
         }
-        return new VariableDeclaration(ctx.ID().getText(), ctx.tipo().getText(), value,
-                line(ctx), column(ctx));
+        // A broken value was already reported: the variable is still declared, or every use cascades.
+        return new VariableDeclaration(ctx.ID().getText(), ctx.tipo().getText(),
+                broken(ctx.expresion(), value) ? null : value, line(ctx), column(ctx));
     }
 
     @Override

@@ -31,7 +31,7 @@ import javafx.scene.layout.VBox;
  * It is loaded on every compilation, valid or not: a file that does not parse is
  * exactly the one whose ERROR steps the user needs to read.
  */
-public class ProcessStackPanel extends BorderPane
+public final class ProcessStackPanel extends BorderPane
 {
     private final ListView<String> logView        = new ListView<>();
     private final Label            stackLabel     = new Label();
