@@ -288,9 +288,9 @@ Cada `main.pig` indica en su encabezado la entrada de ejemplo y la salida espera
 
 ## Manuales
 
-- [Manual de usuario](docs/MANUAL_USUARIO.docx): arranque, ventana, archivos y carpetas, compilar, leer errores,
+- [Manual de usuario](docs/MANUAL_USUARIO.pdf): arranque, ventana, archivos y carpetas, compilar, leer errores,
   resultados y ejecución del C.
-- [Manual técnico](docs/MANUAL_TECNICO.docx): tecnologías, arquitectura, diagrama de clases, palabras reservadas y
+- [Manual técnico](docs/MANUAL_TECNICO.pdf): tecnologías, arquitectura, diagrama de clases, palabras reservadas y
   símbolos, gramáticas, tabla de compatibilidad de tipos, modelo de memoria, cuartetas, errores, pruebas y
   limitaciones conocidas.
 
