@@ -2,6 +2,8 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.util;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.Charset;
+import java.nio.charset.MalformedInputException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,13 +20,30 @@ import java.util.stream.Stream;
  */
 public final class FileManager
 {
+    private static final Charset WINDOWS_1252 = Charset.forName("windows-1252");
+
     private FileManager()
     {
     }
 
+    /**
+     * UTF-8, as the app writes. A file saved as ANSI by a Windows editor still
+     * opens, and the BOM Notepad may put first is not code: the lexer would
+     * report it as an unknown symbol.
+     */
     public static String read(Path path) throws IOException
     {
-        return Files.readString(path, StandardCharsets.UTF_8);
+        String text;
+
+        try
+        {
+            text = Files.readString(path, StandardCharsets.UTF_8);
+        }
+        catch (MalformedInputException notUtf8)
+        {
+            text = new String(Files.readAllBytes(path), WINDOWS_1252);
+        }
+        return !text.isEmpty() && text.charAt(0) == 0xFEFF ? text.substring(1) : text;
     }
 
     public static void write(Path path, String content) throws IOException

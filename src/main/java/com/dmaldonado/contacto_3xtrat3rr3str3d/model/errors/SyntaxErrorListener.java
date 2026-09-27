@@ -93,6 +93,8 @@ public class SyntaxErrorListener extends BaseErrorListener
             return "Error de sintaxis.";
         }
         return message
+                // ANTLR quotes the input it could not parse with its line breaks escaped: 'int a\n    int'.
+                .replaceAll("(\\\\[nrt])+ *", " ")
                 .replace("extraneous input ''", "sangria inesperada")
                 .replace("mismatched input ''", "no se esperaba un cambio de sangria")
                 .replace("DEDENT", "fin de bloque")

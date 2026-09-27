@@ -33,17 +33,17 @@ public final class CEmitter
             #include <stdlib.h>
             #include <string.h>
 
-            #define MEMORY_SIZE   100000
+            #define MEMORY_SIZE   1000000
             /* Ningun marco llega a ese tamano: el chequeo del stack deja ese margen. */
             #define FRAME_MARGIN  1000
             /* Cada llamada del programa tambien es una llamada de C, con sus temporales en el
                stack de C: se detiene antes de agotar los 8 MB que Linux le da por defecto. */
             #define C_STACK_LIMIT (7 * 1024 * 1024)
 
-            float stack[MEMORY_SIZE];   /* marcos de las funciones; P es la base del actual   */
-            float heap[MEMORY_SIZE];    /* cadenas, arreglos y estructuras; H, la celda libre */
-            float P;
-            float H;
+            double stack[MEMORY_SIZE];   /* marcos de las funciones; P es la base del actual   */
+            double heap[MEMORY_SIZE];    /* cadenas, arreglos y estructuras; H, la celda libre */
+            double P;
+            double H;
             uintptr_t stackBase;        /* donde empezaba el stack de C al entrar a main       */
 
             /* ------------------------------------------------------------------
@@ -64,8 +64,18 @@ public final class CEmitter
                 }
             }
 
+            /* Un numerus desbordado (2147483647 + 1) vale como en Java: sus 32 bits bajos. Pasado 2^63 no
+               cabe ni en long long (convertirlo seria indefinido en C) y ya no guarda bits exactos: 0.
+               ponytail: + - * no se envuelven al calcularse, solo al imprimirse, dividirse o en un residuo;
+               es exacto hasta 2^53. Para el int de Java en todo, envolver cada resultado numerus en
+               QuadrupleGenerator.binary() e increment(), con * en long long. */
+            int wrapInt(double value)
+            {
+                return value > -9.2e18 && value < 9.2e18 ? (int) (long long) value : 0;
+            }
+
             /* Un objeto o arreglo sin crear es null (0): usarlo detiene el programa. */
-            void checkNull(float pointer)
+            void checkNull(double pointer)
             {
                 if (pointer == 0)
                 {
@@ -76,66 +86,67 @@ public final class CEmitter
 
             /* Un arreglo guarda su largo en la celda anterior a la primera: salirse de el detiene el programa.
                En una matriz es la celda aplanada, revisada despues de cada indice interno. */
-            void checkIndex(float array, float index)
+            void checkIndex(double array, double index)
             {
                 checkNull(array);
                 if (index < 0 || index >= heap[(int) array - 1])
                 {
-                    printf("\\nError: posicion %d fuera de un arreglo de %d posiciones.\\n", (int) index,
+                    printf("\\nError: posicion %.0f fuera de un arreglo de %d posiciones.\\n", index,
                            (int) heap[(int) array - 1]);
                     exit(1);
                 }
             }
 
-            void checkBound(float index, float size)
+            void checkBound(double index, double size)
             {
                 if (index < 0 || index >= size)
                 {
-                    printf("\\nError: indice %d fuera de una dimension de %d posiciones.\\n", (int) index,
+                    printf("\\nError: indice %.0f fuera de una dimension de %d posiciones.\\n", index,
                            (int) size);
                     exit(1);
                 }
             }
 
             /* Un tamano negativo haria retroceder a H sobre lo que ya vive en el heap. */
-            void checkSize(float size)
+            void checkSize(double size)
             {
                 if (size < 0)
                 {
-                    printf("\\nError: tamano de arreglo negativo (%d).\\n", (int) size);
+                    printf("\\nError: tamano de arreglo negativo (%.0f).\\n", size);
                     exit(1);
                 }
             }
 
-            /* Division y residuo enteros: en C, dividir un int entre cero aborta el programa. */
-            void checkDivisor(float right)
+            /* Division y residuo enteros: en C, dividir un int entre cero aborta el programa, y tambien
+               -2147483648 / -1 en int; en long long ese cociente cabe. */
+            void checkDivisor(double right)
             {
-                if ((int) right == 0)
+                if (wrapInt(right) == 0)
                 {
                     printf("\\nError: division entre cero.\\n");
                     exit(1);
                 }
             }
 
-            float intDivide(float left, float right)
+            double intDivide(double left, double right)
             {
                 checkDivisor(right);
-                return (float) ((int) left / (int) right);
+                return (double) ((long long) wrapInt(left) / (long long) wrapInt(right));
             }
 
-            float intModulo(float left, float right)
+            double intModulo(double left, double right)
             {
                 checkDivisor(right);
-                return (float) ((int) left % (int) right);
+                return (double) ((long long) wrapInt(left) % (long long) wrapInt(right));
             }
 
             /* Cada lenguaje escribe sus booleanos: 0 PigLatin, 1 Y?, 2 Zetariano. */
             const char *TRUE_WORDS[]  = { "verum", "verdadero", "true" };
             const char *FALSE_WORDS[] = { "falsus", "falso", "false" };
 
-            float reserve(int size)
+            double reserve(int size)
             {
-                float start = H;
+                double start = H;
 
                 H = H + size;
                 checkMemory();
@@ -143,9 +154,9 @@ public final class CEmitter
             }
 
             /* Copia un texto de C al heap y devuelve su direccion. */
-            float textFromBytes(const char *text)
+            double textFromBytes(const char *text)
             {
-                float start = reserve((int) strlen(text) + 1);
+                double start = reserve((int) strlen(text) + 1);
                 int   k     = (int) start;
 
                 for (int i = 0; text[i] != '\\0'; i++)
@@ -187,39 +198,39 @@ public final class CEmitter
                 }
             }
 
-            void printInt(float value)
+            void printInt(double value)
             {
-                printf("%d", (int) value);
+                printf("%d", wrapInt(value));
             }
 
-            /* Un decimal con las cifras que su float guarda, sin exponente: 12345.75, 0.1, 2.0. */
-            void floatText(float value, char *text, size_t size)
+            /* Un decimal con las cifras que su double guarda: 12345.75, 0.1, 2.0. Desde 1e16 sus cifras enteras
+               ya no son exactas, y lo muy pequeno no cabe en 17 decimales: esos van con exponente. */
+            void floatText(double value, char *text, size_t size)
             {
-                if (value != value || value > FLT_MAX || value < -FLT_MAX)
+                if (value != value || value > DBL_MAX || value < -DBL_MAX)
                 {
                     snprintf(text, size, "%s", value != value ? "NaN" : value > 0 ? "Infinity" : "-Infinity");
                     return;
                 }
-                for (int decimals = 1; decimals <= 9; decimals++)
+                for (int decimals = 1; decimals <= 17 && value < 1e16 && value > -1e16; decimals++)
                 {
                     snprintf(text, size, "%.*f", decimals, value);
-                    if ((float) strtod(text, NULL) == value)
+                    if (strtod(text, NULL) == value)
                     {
                         return;
                     }
                 }
-                /* Lo muy pequeno no cabe en 9 decimales: con exponente. */
-                for (int digits = 1; digits <= 9; digits++)
+                for (int digits = 1; digits <= 17; digits++)
                 {
                     snprintf(text, size, "%.*g", digits, value);
-                    if ((float) strtod(text, NULL) == value)
+                    if (strtod(text, NULL) == value)
                     {
                         return;
                     }
                 }
             }
 
-            void printFloat(float value)
+            void printFloat(double value)
             {
                 char text[64];
 
@@ -227,7 +238,7 @@ public final class CEmitter
                 fputs(text, stdout);
             }
 
-            void printChar(float value)
+            void printChar(double value)
             {
                 char text[5];
 
@@ -235,12 +246,12 @@ public final class CEmitter
                 fputs(text, stdout);
             }
 
-            void printBool(float value, float language)
+            void printBool(double value, double language)
             {
                 fputs(value != 0 ? TRUE_WORDS[(int) language] : FALSE_WORDS[(int) language], stdout);
             }
 
-            void printString(float pointer)
+            void printString(double pointer)
             {
                 for (int i = (int) pointer; heap[i] != -1; i++)
                 {
@@ -265,15 +276,16 @@ public final class CEmitter
                 while (character != '\\n' && character != EOF);
             }
 
-            /* Cada lectura toma una linea completa, aunque este en blanco: lo que sobre de ella no pasa a la siguiente. */
+            /* Cada lectura toma una linea completa, aunque este en blanco: lo que sobre de ella no pasa a la siguiente.
+               Sin mas entrada se detiene, como el Scanner de Java: leer 0 para siempre dejaria un menu en un ciclo sin fin. */
             void readLine(char *text, int size)
             {
                 size_t length;
 
                 if (fgets(text, size, stdin) == NULL)
                 {
-                    text[0] = '\\0';
-                    return;
+                    printf("\\nError: no hay mas datos en la entrada.\\n");
+                    exit(1);
                 }
                 length = strcspn(text, "\\r\\n");
                 if (text[length] == '\\0' && !feof(stdin))
@@ -284,24 +296,24 @@ public final class CEmitter
             }
 
             /* Lo que no es un numero lee 0. */
-            float readInt(void)
+            double readInt(void)
             {
                 char text[1024];
 
                 readLine(text, sizeof text);
-                return (float) strtol(text, NULL, 10);
+                return (double) strtol(text, NULL, 10);
             }
 
-            float readFloat(void)
+            double readFloat(void)
             {
                 char text[1024];
 
                 readLine(text, sizeof text);
-                return (float) strtod(text, NULL);
+                return (double) strtod(text, NULL);
             }
 
             /* El primer simbolo de la linea, decodificado de UTF-8: una ñ es un solo caracter. */
-            float readChar(void)
+            double readChar(void)
             {
                 char           text[1024];
                 unsigned char *first;
@@ -317,11 +329,11 @@ public final class CEmitter
                 {
                     code = (code << 6) | (first[i] & 0x3F);
                 }
-                return (float) code;
+                return (double) code;
             }
 
             /* verum, verdadero o true (la palabra de cualquiera de los tres lenguajes), o un numero no 0. */
-            float readBool(void)
+            double readBool(void)
             {
                 char text[1024];
 
@@ -336,7 +348,7 @@ public final class CEmitter
                 return strtol(text, NULL, 10) != 0;
             }
 
-            float readString(void)
+            double readString(void)
             {
                 char text[1024];
 
@@ -344,7 +356,7 @@ public final class CEmitter
                 return textFromBytes(text);
             }
 
-            int stringLength(float pointer)
+            int stringLength(double pointer)
             {
                 int length = 0;
 
@@ -355,9 +367,9 @@ public final class CEmitter
                 return length;
             }
 
-            float concat(float left, float right)
+            double concat(double left, double right)
             {
-                float start = reserve(stringLength(left) + stringLength(right) + 1);
+                double start = reserve(stringLength(left) + stringLength(right) + 1);
                 int   k     = (int) start;
 
                 for (int i = (int) left; heap[i] != -1; i++)
@@ -372,17 +384,13 @@ public final class CEmitter
                 return start;
             }
 
-            /* Por contenido, no por direccion: dos literales iguales pueden vivir en celdas distintas. */
-            float stringEquals(float left, float right)
+            /* Por contenido, no por direccion: dos literales iguales pueden vivir en celdas distintas.
+               Un textum sin valor (0) lee heap[0], la cadena vacia, como al imprimirlo o concatenarlo. */
+            double stringEquals(double left, double right)
             {
                 int i = (int) left;
                 int j = (int) right;
 
-                /* null (0) solo es igual a null: "" es otra cadena. */
-                if (left == 0 || right == 0)
-                {
-                    return left == right;
-                }
                 while (heap[i] != -1 && heap[i] == heap[j])
                 {
                     i++;
@@ -391,15 +399,25 @@ public final class CEmitter
                 return heap[i] == heap[j];
             }
 
-            float intToString(float value)
+            /* Zetariano tiene null: null solo es igual a null, y "" es otra cadena. */
+            double stringEqualsOrNull(double left, double right)
+            {
+                if (left == 0 || right == 0)
+                {
+                    return left == right;
+                }
+                return stringEquals(left, right);
+            }
+
+            double intToString(double value)
             {
                 char text[16];
 
-                snprintf(text, sizeof text, "%d", (int) value);
+                snprintf(text, sizeof text, "%d", wrapInt(value));
                 return textFromBytes(text);
             }
 
-            float floatToString(float value)
+            double floatToString(double value)
             {
                 char text[64];
 
@@ -407,7 +425,7 @@ public final class CEmitter
                 return textFromBytes(text);
             }
 
-            float charToString(float value)
+            double charToString(double value)
             {
                 char text[5];
 
@@ -415,7 +433,7 @@ public final class CEmitter
                 return textFromBytes(text);
             }
 
-            float boolToString(float value, float language)
+            double boolToString(double value, double language)
             {
                 return textFromBytes(value != 0 ? TRUE_WORDS[(int) language] : FALSE_WORDS[(int) language]);
             }
@@ -486,7 +504,7 @@ public final class CEmitter
         }
         if (!temporaries.isEmpty())
         {
-            c.append("    float ").append(String.join(", ", temporaries)).append(";\n");
+            c.append("    double ").append(String.join(", ", temporaries)).append(";\n");
         }
         if ("main".equals(name))
         {
@@ -548,10 +566,10 @@ public final class CEmitter
         return q.result().isEmpty() ? call : q.result() + " = " + call;
     }
 
-    /** 65536 * 65536 would be int arithmetic in C, and overflow: every value is a float, constants too. */
+    /** 65536 * 65536 would be int arithmetic in C, and overflow: every value is a double, constants too. */
     private static String number(String operand)
     {
-        return INTEGER.matcher(operand).matches() ? operand + ".0f" : operand;
+        return INTEGER.matcher(operand).matches() ? operand + ".0" : operand;
     }
 
     /** An array subscript has to be an int in C; a constant already is one. */

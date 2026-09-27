@@ -139,7 +139,9 @@ public final class ReturnPathChecker
 
     /**
      * Index of the first unreachable statement inside a block, the one right
-     * after a reddere / interrumpe / perge, or -1 when there is none.
+     * after a statement that cannot complete normally (a reddere, a si whose
+     * branches all return, a dum (verum) without interrumpe), or -1 when there
+     * is none.
      */
     public static int firstUnreachableIndex(Block block)
     {
@@ -147,11 +149,7 @@ public final class ReturnPathChecker
 
         for (int i = 0; i < statements.size() - 1; i++)
         {
-            AstNode current = statements.get(i);
-
-            if (current instanceof ReturnStatement
-             || current instanceof BreakStatement
-             || current instanceof ContinueStatement)
+            if (!completesNormally(statements.get(i)))
             {
                 return i + 1;
             }

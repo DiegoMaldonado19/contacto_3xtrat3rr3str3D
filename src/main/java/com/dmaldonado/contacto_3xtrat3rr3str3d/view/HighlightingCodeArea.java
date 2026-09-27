@@ -3,6 +3,7 @@ package com.dmaldonado.contacto_3xtrat3rr3str3d.view;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.grammar.PigLexer;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.grammar.YLexer;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.grammar.ZLexer;
+import com.dmaldonado.contacto_3xtrat3rr3str3d.model.CompilerPipeline;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Set;
@@ -145,15 +146,18 @@ public final class HighlightingCodeArea
             return "keyword";
         }
 
-        return switch (String.valueOf(vocabulary.getSymbolicName(tokenType)))
+        String name = String.valueOf(vocabulary.getSymbolicName(tokenType));
+
+        if (CompilerPipeline.LEXICAL_ERRORS.containsKey(name))
+        {
+            return "invalid";
+        }
+        return switch (name)
         {
             case "ENTERO", "DECIMAL"                          -> "number";
             case "TEXTO", "CARACTER"                          -> "string";
             case "COMENTARIO_LINEA", "COMENTARIO_BLOQUE",
                  "COMENTARIO_HASH"                            -> "comment";
-            case "TEXTO_SIN_CERRAR", "CARACTER_SIN_CERRAR",
-                 "COMENTARIO_SIN_CERRAR", "COMENTARIO_HASH_SIN_CERRAR",
-                 "CARACTER_INVALIDO"                          -> "invalid";
             default                                           -> "plain";
         };
     }

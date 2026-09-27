@@ -273,7 +273,9 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         {
             error(node, "Falta el tipo del arreglo '" + node.getName()
                     + "' y no hay valores iniciales de los cuales deducirlo.", node.getName());
-            elementType = DataType.ERROR;
+            node.getDimensions().forEach(size -> size.accept(this));
+            declareArray(node, DataType.ERROR, null, Collections.nCopies(Math.max(1, node.getRank()), -1));
+            return DataType.ERROR;
         }
         else if (elementType == DataType.ESTRUCTURA)
         {
@@ -314,11 +316,10 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
             DataType   valueType = checkValue(value, elementType, elementStructName, true);
 
             checkArrayShape(value, Collections.nCopies(node.getRank(), -1));
-            if (valueType != DataType.NULO
-                    && !assignable(elementType, elementStructName, valueType, value.getStructName()))
+            if (!fits(true, elementType, elementStructName, valueType, value.getStructName()))
             {
-                error(value, "Valor de tipo '" + describe(valueType, value.getStructName())
-                        + "' incompatible con el arreglo '" + node.getName() + "' de tipo '"
+                error(value, "Un arreglo de '" + describe(valueType, value.getStructName())
+                        + "' es incompatible con el arreglo '" + node.getName() + "' de '"
                         + node.getTypeText() + "'.", node.getName());
             }
             declareArray(node, elementType, elementStructName, dimensions);
@@ -642,14 +643,16 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     {
         int unreachable = ReturnPathChecker.firstUnreachableIndex(node);
 
-        if (unreachable >= 0)
-        {
-            error(node.getStatements().get(unreachable),
-                    "Codigo inalcanzable: nunca se ejecutara esta instruccion.", "");
-        }
         for (AstNode statement : node.getStatements())
         {
             statement.accept(this);
+        }
+        // After them: an error of that statement at the same spot tells more, and this one gives way.
+        if (unreachable >= 0)
+        {
+            AstNode statement = node.getStatements().get(unreachable);
+
+            error(statement, "Codigo inalcanzable: nunca se ejecutara esta instruccion.", statement.getLabel());
         }
     }
 
@@ -672,12 +675,12 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
                 array.markRebound();
             }
         }
-        if (!(wholeArray && valueType == DataType.NULO)
-                && !assignable(targetType, targetStruct, valueType, node.getValue().getStructName()))
+        if (!fits(wholeArray, targetType, targetStruct, valueType, node.getValue().getStructName()))
         {
-            error(node, "Asignacion invalida: no se puede guardar '"
-                    + describe(valueType, node.getValue().getStructName())
-                    + "' en un destino de tipo '" + describe(targetType, targetStruct) + "'.", "=");
+            error(node, "Asignacion invalida: no se puede guardar " + (wholeArray ? "un arreglo de '" : "'")
+                    + describe(valueType, node.getValue().getStructName()) + "' en "
+                    + (wholeArray ? "un arreglo de '" : "un destino de tipo '")
+                    + describe(targetType, targetStruct) + "'.", "=");
         }
         return targetType;
     }
@@ -852,7 +855,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
             if (type == DataType.ESTRUCTURA)
             {
-                error(value, "No se puede imprimir una structura u objeto completo; imprima sus "
+                error(value, "No se puede imprimir una " + structWord() + " u objeto completo; imprima sus "
                         + "atributos.", keyword);
             }
             else if (type == DataType.VOID)
@@ -877,7 +880,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
         if (type == DataType.ESTRUCTURA || isArrayValue(node.getTarget()))
         {
-            error(node, "Solo se puede leer un valor primitivo desde la entrada, no una structura "
+            error(node, "Solo se puede leer un valor primitivo desde la entrada, no una " + structWord() + " "
                     + "ni un arreglo completo.", "<<");
         }
         return DataType.VOID;
@@ -1026,8 +1029,8 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
                     node.getText());
             return typeCheck(node, DataType.ERROR);
         }
-        // Memory holds a float: a larger decimal would be infinity there.
-        if (node.getType() == DataType.DECIMALIS && Float.isInfinite(Float.parseFloat(node.getText())))
+        // Memory holds a double: a larger decimal would be infinity there.
+        if (node.getType() == DataType.DECIMALIS && Double.isInfinite(Double.parseDouble(node.getText())))
         {
             error(node, "El decimal " + node.getText() + " excede el rango permitido.", node.getText());
             return typeCheck(node, DataType.ERROR);
@@ -1053,7 +1056,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         if (symbol instanceof StructSymbol struct)
         {
             error(node, "'" + node.getName() + "' es una "
-                    + (struct.isClass() ? "clase" : keyword("structura", "estructura", "estructura"))
+                    + (struct.isClass() ? "clase" : structWord())
                     + ", no una variable.", node.getName());
             return typeCheck(node, DataType.ERROR);
         }
@@ -1197,7 +1200,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
         if (struct == null || !struct.hasAttribute(node.getMemberName()))
         {
-            error(node, (struct != null && struct.isClass() ? "La clase '" : "La structura '")
+            error(node, (struct != null && struct.isClass() ? "La clase '" : "La " + structWord() + " '")
                     + structName + "' no tiene el atributo '" + node.getMemberName() + "'.",
                     node.getMemberName());
             return typeCheck(node, DataType.ERROR);
@@ -1208,12 +1211,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         return typeCheck(node, attribute.getType());
     }
 
-    /**
-     * Resolucion de sobrecarga: los argumentos se visitan UNA vez (un literal
-     * { } espera al parametro elegido, que es quien le da su tipo), luego se
-     * eligen los candidatos por aridad y, si queda mas de uno, por
-     * compatibilidad, prefiriendo el que coincide exacto en mas posiciones.
-     */
+    /** Resolved by resolve(), like any other call: see there how an overload is chosen. */
     @Override
     public DataType visitFunctionCallExpression(FunctionCallExpression node)
     {
@@ -1276,16 +1274,26 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
             return null;
         }
 
-        FunctionSymbol function = candidates.size() == 1
-                ? candidates.get(0)
-                : bestOverload(candidates, arguments, types);
-
-        if (function == null)
+        // An argument that already failed fits every overload: picking one would add the errors of its guess.
+        if (candidates.size() > 1 && types.contains(DataType.ERROR))
         {
-            error(node, "Ninguna version de '" + name + "' acepta esos argumentos. "
-                    + "Versiones: " + signatures(overloads) + ".", name);
             return null;
         }
+
+        List<FunctionSymbol> best = candidates.size() == 1
+                ? candidates
+                : mostSpecific(candidates, arguments, types);
+
+        if (best.size() != 1)
+        {
+            error(node, best.isEmpty()
+                    ? "Ninguna version de '" + name + "' acepta esos argumentos. Versiones: "
+                      + signatures(overloads) + "."
+                    : "La llamada a '" + name + "' es ambigua entre: " + signatures(best) + ".", name);
+            return null;
+        }
+
+        FunctionSymbol function = best.get(0);
 
         for (int i = 0; i < arguments.size(); i++)
         {
@@ -1300,11 +1308,13 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
                 checkArrayShape(argument, List.of(-1));
             }
 
-            if (!assignable(parameter.getType(), parameter.getStructName(), argumentType,
-                            argument.getStructName()))
+            if (!fits(parameter.isArray(), parameter.getType(), parameter.getStructName(), argumentType,
+                      argument.getStructName()))
             {
-                error(argument, "El argumento " + (i + 1) + " de '" + name
-                        + "' debe ser '" + parameter.getTypeText() + "' y es '"
+                String of = parameter.isArray() ? "un arreglo de '" : "'";
+
+                error(argument, "El argumento " + (i + 1) + " de '" + name + "' debe ser " + of
+                        + describe(parameter.getType(), parameter.getStructName()) + "' y es " + of
                         + describe(argumentType, argument.getStructName()) + "'.", name);
             }
         }
@@ -1338,48 +1348,73 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
                 .toList();
     }
 
-    /** Null when no candidate accepts every argument. */
-    private FunctionSymbol bestOverload(List<FunctionSymbol> candidates, List<Expression> arguments,
-                                        List<DataType> types)
+    /**
+     * Java's rule: of the overloads that accept every argument, those no other
+     * one beats by being narrower, so g('c') picks g(int) over g(double). Empty
+     * when none accepts them; several when they tie, as f(int, double) and
+     * f(double, int) called with (1, 1).
+     */
+    private List<FunctionSymbol> mostSpecific(List<FunctionSymbol> candidates, List<Expression> arguments,
+                                              List<DataType> types)
     {
-        FunctionSymbol best      = null;
-        int            bestScore = -1;
+        List<FunctionSymbol> applicable = candidates.stream()
+                .filter(candidate -> accepts(candidate, arguments, types))
+                .toList();
 
-        for (FunctionSymbol candidate : candidates)
+        return applicable.stream()
+                .filter(candidate -> applicable.stream()
+                        .noneMatch(other -> narrower(other, candidate) && !narrower(candidate, other)))
+                .toList();
+    }
+
+    private boolean accepts(FunctionSymbol candidate, List<Expression> arguments, List<DataType> types)
+    {
+        for (int i = 0; i < arguments.size(); i++)
         {
-            int score = 0;
+            VariableSymbol parameter = candidate.getParameters().get(i);
+            Expression     argument  = arguments.get(i);
+            DataType       type      = types.get(i);
 
-            for (int i = 0; i < arguments.size() && score >= 0; i++)
+            if (argument instanceof CompositeLiteralExpression literal)
             {
-                VariableSymbol parameter = candidate.getParameters().get(i);
-                Expression     argument  = arguments.get(i);
-                DataType       type      = types.get(i);
+                // A { } literal fits a single structura parameter that has the attributes it names, or one per value.
+                StructSymbol struct = symbolTable.lookupStruct(parameter.getStructName());
 
-                if (type == null)   // a { } literal fits any single structura parameter
+                if (parameter.getType() != DataType.ESTRUCTURA || parameter.isArray() || struct == null
+                        || (literal.isNamed()
+                            ? !struct.getAttributes().keySet().containsAll(literal.getFieldNames())
+                            : literal.getValues().size() != struct.getAttributes().size()))
                 {
-                    score = parameter.getType() == DataType.ESTRUCTURA && !parameter.isArray()
-                            ? score : -1;
-                }
-                else if (type != DataType.ERROR
-                        && (isArrayValue(argument) != parameter.isArray()
-                            || !assignable(parameter.getType(), parameter.getStructName(), type,
-                                           argument.getStructName())))
-                {
-                    score = -1;
-                }
-                else if (type == parameter.getType()
-                        && Objects.equals(argument.getStructName(), parameter.getStructName()))
-                {
-                    score++;
+                    return false;
                 }
             }
-            if (score > bestScore)
+            else if (type != DataType.ERROR
+                    && (isArrayValue(argument) != parameter.isArray() && type != DataType.NULO
+                        || !fits(parameter.isArray(), parameter.getType(), parameter.getStructName(), type,
+                                 argument.getStructName())))
             {
-                best      = candidate;
-                bestScore = score;
+                return false;
             }
         }
-        return best;
+        return true;
+    }
+
+    /** Every parameter of the first overload could be passed to the second one. */
+    private boolean narrower(FunctionSymbol first, FunctionSymbol second)
+    {
+        for (int i = 0; i < first.getParameterCount(); i++)
+        {
+            VariableSymbol mine   = first.getParameters().get(i);
+            VariableSymbol theirs = second.getParameters().get(i);
+
+            if (mine.isArray() != theirs.isArray()
+                    || !fits(mine.isArray(), theirs.getType(), theirs.getStructName(), mine.getType(),
+                             mine.getStructName()))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static String signatures(List<FunctionSymbol> overloads)
@@ -1520,7 +1555,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
     public DataType visitCompositeLiteralExpression(CompositeLiteralExpression node)
     {
         error(node, "Un literal '{ ... }' solo puede usarse al declarar o asignar una "
-                + "structura, o como valores iniciales de un arreglo.", "{}");
+                + structWord() + ", o como valores iniciales de un arreglo.", "{}");
 
         for (Expression value : node.getValues())
         {
@@ -1559,14 +1594,14 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         if (DataType.fromText(node.getName()) != DataType.ESTRUCTURA)
         {
             error(node, "'" + node.getName() + "' es el nombre de un tipo primitivo: la "
-                    + (classType ? "clase" : keyword("structura", "estructura", "estructura"))
+                    + (classType ? "clase" : structWord())
                     + " necesita otro nombre.", node.getName());
             return;
         }
         // Also one visible from an outer scope: two layouts under one name would be taken for each other.
         if (symbolTable.lookupLocal(node.getName()) != null || symbolTable.lookupStruct(node.getName()) != null)
         {
-            error(node, "La " + (classType ? "clase" : keyword("structura", "estructura", "estructura"))
+            error(node, "La " + (classType ? "clase" : structWord())
                     + " '" + node.getName() + "' ya fue declarada.", node.getName());
             return;
         }
@@ -1588,7 +1623,8 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
             if (!struct.addAttribute(attribute))
             {
                 error(field, "El atributo '" + field.getName()
-                        + "' esta repetido en la structura '" + node.getName() + "'.",
+                        + "' esta repetido en la " + (classType ? "clase" : structWord()) + " '"
+                        + node.getName() + "'.",
                         field.getName());
             }
         }
@@ -1679,7 +1715,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
         if (values.size() != attributes.size())
         {
-            error(literal, "La structura '" + struct.getName() + "' tiene " + attributes.size()
+            error(literal, "La " + structWord() + " '" + struct.getName() + "' tiene " + attributes.size()
                     + " atributo(s) y el literal trae " + values.size() + " valor(es).",
                     struct.getName());
         }
@@ -1776,8 +1812,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
 
         DataType valueType = checkValue(value, attribute.getType(), attribute.getStructName(), true);
 
-        if (!assignable(attribute.getType(), attribute.getStructName(), valueType,
-                        value.getStructName()))
+        if (!fits(true, attribute.getType(), attribute.getStructName(), valueType, value.getStructName()))
         {
             error(value, "El atributo '" + attribute.getName() + "' es un arreglo de '"
                     + attribute.getTypeText() + "' y recibio '"
@@ -1919,6 +1954,22 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         return true;
     }
 
+    /**
+     * assignable(), except for a whole array: it is shared, not copied, so a
+     * numerus array seen as decimalis would let 2.5 into a numerus cell. Its
+     * elements need the exact type.
+     */
+    private boolean fits(boolean wholeArray, DataType target, String targetStruct,
+                         DataType source, String sourceStruct)
+    {
+        if (!wholeArray)
+        {
+            return assignable(target, targetStruct, source, sourceStruct);
+        }
+        return target == DataType.ERROR || source == DataType.ERROR || source == DataType.NULO
+                || target == source && Objects.equals(targetStruct, sourceStruct);
+    }
+
     private void requireBooleanCondition(Expression condition, String statement)
     {
         if (condition == null)
@@ -2016,6 +2067,12 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         };
     }
 
+    /** A structure in a message, named as the file being read names it. */
+    private String structWord()
+    {
+        return keyword("structura", "estructura", "estructura");
+    }
+
     /**
      * Constant value of an integer expression, or null when it is not constant.
      * Integer and not int: -1 is a valid index, so it cannot double as the
@@ -2038,7 +2095,7 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
         if (expression instanceof UnaryExpression unary && "-".equals(unary.getOperator()))
         {
             Integer value = extractInteger(unary.getOperand());
-            return value == null ? null : -value;
+            return value == null || value == Integer.MIN_VALUE ? null : -value;
         }
         // Statement: an index "que se puede evaluar al hacer la verificacion
         // de semantica" has to be range checked, so numeros[1 + 1] is folded.
@@ -2052,14 +2109,21 @@ public class SemanticAnalyzer implements AstVisitor<DataType>
                 return null;
             }
 
-            return switch (binary.getOperator())
+            try
             {
-                case "+" -> left + right;
-                case "-" -> left - right;
-                case "*" -> left * right;
-                case "/" -> right == 0 ? null : left / right;
-                default  -> null;
-            };
+                return switch (binary.getOperator())
+                {
+                    case "+" -> Math.addExact(left, right);
+                    case "-" -> Math.subtractExact(left, right);
+                    case "*" -> Math.multiplyExact(left, right);
+                    case "/" -> Math.divideExact(left, right);
+                    default  -> null;
+                };
+            }
+            catch (ArithmeticException overflow)
+            {
+                return null;   // 65536 * 65536 does not fit an int, x / 0 has no value: nothing it can check
+            }
         }
         return null;
     }

@@ -111,7 +111,7 @@ COMENTARIO_HASH_SIN_CERRAR : '##' ( ~'#' | '#' ~'#' )* '#'? ;
 CARACTER_INVALIDO     : . ;
 
 /* ---------- Fragmentos ---------------------------------------------- */
-fragment LETRA  : [a-zA-ZáéíóúÁÉÍÓÚñÑ] ;
+fragment LETRA  : [a-zA-ZáéíóúÁÉÍÓÚñÑüÜ] ;
 fragment DIGITO : [0-9] ;
 fragment ESCAPE : '\\' [nrt"'\\] ;
 // Inside a text any escape lexes: an unknown one, as in "C:\Users", is kept as written.

@@ -28,18 +28,22 @@ import com.dmaldonado.contacto_3xtrat3rr3str3d.model.symbols.SymbolTable;
 import com.dmaldonado.contacto_3xtrat3rr3str3d.util.FileManager;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
+import org.antlr.v4.runtime.DefaultErrorStrategy;
 import org.antlr.v4.runtime.Lexer;
 import org.antlr.v4.runtime.Parser;
 import org.antlr.v4.runtime.ParserRuleContext;
@@ -61,6 +65,17 @@ import org.antlr.v4.runtime.tree.ParseTreeWalker;
 public class CompilerPipeline
 {
     private static final Logger LOGGER = Logger.getLogger(CompilerPipeline.class.getName());
+
+    /** The error token of every lexer and what it means. The editor colors these same tokens as errors. */
+    public static final Map<String, String> LEXICAL_ERRORS = Map.of(
+            "TEXTO_SIN_CERRAR",           "Cadena sin cerrar: falta la comilla doble final.",
+            "CARACTER_SIN_CERRAR",        "Caracter sin cerrar: falta la comilla simple final.",
+            "COMENTARIO_SIN_CERRAR",      "Comentario de bloque sin cerrar: falta '*/'.",
+            "COMENTARIO_HASH_SIN_CERRAR", "Comentario de bloque sin cerrar: falta '##'.",
+            "CARACTER_LARGO",             "Un caracter lleva un solo simbolo: un texto va entre comillas dobles.",
+            "SANGRIA_INVALIDA",           "La sangria no coincide con la de ningun bloque abierto.",
+            "CARACTER_MAL_FORMADO",       "Caracter vacio o escape invalido: validos \\n \\t \\r \\' \\\" \\\\.",
+            "CARACTER_INVALIDO",          "Simbolo no reconocido por el lenguaje.");
 
     /**
      * @param ast          null when the source did not get past the lexer.
@@ -104,15 +119,26 @@ public class CompilerPipeline
         {
             // Each nesting level is one more level of recursion in the parser and in every tree walk.
             LOGGER.log(Level.WARNING, "Programa demasiado anidado para analizarlo", error);
-
-            ErrorManager errorManager = new ErrorManager();
-
-            errorManager.setSource(sourcePath == null ? "" : sourcePath.getFileName().toString());
-            errorManager.addSyntactic("El programa anida demasiadas expresiones o instrucciones para "
-                    + "analizarlo: divida la expresion mas larga en varias.", "", 1, 1);
-            return new CompilationResult(null, new SymbolTable(), List.of(), errorManager.getErrors(),
-                    List.of(), "");
+            return failure(sourcePath, errors -> errors.addSyntactic("El programa anida demasiadas expresiones "
+                    + "o instrucciones para analizarlo: divida la expresion mas larga en varias.", "", 1, 1));
         }
+        catch (RuntimeException exception)
+        {
+            // A compiler bug still gives a result: without one the screen keeps the previous file's.
+            LOGGER.log(Level.SEVERE, "Fallo interno al compilar " + sourcePath, exception);
+            return failure(sourcePath, errors -> errors.addSemantic("Error interno del compilador (" + exception
+                    + "): el programa no se pudo analizar.", "", 1, 1));
+        }
+    }
+
+    /** A result that only carries the error that stopped the compilation. */
+    private static CompilationResult failure(Path sourcePath, Consumer<ErrorManager> report)
+    {
+        ErrorManager errorManager = new ErrorManager();
+
+        errorManager.setSource(sourcePath == null ? "" : sourcePath.getFileName().toString());
+        report.accept(errorManager);
+        return new CompilationResult(null, new SymbolTable(), List.of(), errorManager.getErrors(), List.of(), "");
     }
 
     private CompilationResult compileSource(String source, Path sourcePath)
@@ -233,6 +259,8 @@ public class CompilerPipeline
             case PIG ->
             {
                 PigParser                 parser = listenedBy(new PigParser(tokens), errorManager);
+
+                parser.setErrorHandler(new KeepFinisStrategy());
                 PigParser.ProgramaContext tree   = parser.programa();
                 yield finish(parser, tree, () -> new PigAstBuilder().build(tree), errorManager);
             }
@@ -249,6 +277,21 @@ public class CompilerPipeline
                 yield finish(parser, tree, () -> new ZAstBuilder().build(tree), errorManager);
             }
         };
+    }
+
+    /**
+     * ">> x" and then "FINIS;": ANTLR would rather drop FINIS than insert the
+     * missing ';', and then report FINIS missing as well. Never dropping it makes
+     * the error the ';' that really is missing.
+     */
+    private static final class KeepFinisStrategy extends DefaultErrorStrategy
+    {
+        @Override
+        protected Token singleTokenDeletion(Parser recognizer)
+        {
+            return recognizer.getCurrentToken().getType() == PigLexer.FIN_PROGRAMA
+                   ? null : super.singleTokenDeletion(recognizer);
+        }
     }
 
     private static <P extends Parser> P listenedBy(P parser, ErrorManager errorManager)
@@ -284,18 +327,7 @@ public class CompilerPipeline
 
         for (Token token : tokens.getTokens())
         {
-            String description = switch (String.valueOf(vocabulary.getSymbolicName(token.getType())))
-            {
-                case "TEXTO_SIN_CERRAR"           -> "Cadena sin cerrar: falta la comilla doble final.";
-                case "CARACTER_SIN_CERRAR"        -> "Caracter sin cerrar: falta la comilla simple final.";
-                case "COMENTARIO_SIN_CERRAR"      -> "Comentario de bloque sin cerrar: falta '*/'.";
-                case "COMENTARIO_HASH_SIN_CERRAR" -> "Comentario de bloque sin cerrar: falta '##'.";
-                case "CARACTER_LARGO"             -> "Un caracter lleva un solo simbolo: un texto va entre comillas dobles.";
-                case "SANGRIA_INVALIDA"           -> "La sangria no coincide con la de ningun bloque abierto.";
-                case "CARACTER_MAL_FORMADO"       -> "Caracter vacio o escape invalido: validos \\n \\t \\r \\' \\\" \\\\.";
-                case "CARACTER_INVALIDO"          -> "Simbolo no reconocido por el lenguaje.";
-                default                           -> null;
-            };
+            String description = LEXICAL_ERRORS.get(String.valueOf(vocabulary.getSymbolicName(token.getType())));
 
             if (description != null)
             {
@@ -342,9 +374,10 @@ public class CompilerPipeline
      */
     private List<Unit> loadImports(Program root, Path rootPath, ErrorManager errorManager)
     {
-        List<Unit> units      = new ArrayList<>();
-        Set<Path>  seen       = new HashSet<>();
-        String     rootSource = rootPath == null ? "" : rootPath.getFileName().toString();
+        List<Unit>  units      = new ArrayList<>();
+        // As written, not as a Path: Windows would take sub.bien.y for sub.Bien.y and skip the case check.
+        Set<String> seen       = new HashSet<>();
+        String      rootSource = rootPath == null ? "" : rootPath.getFileName().toString();
 
         for (ImportDeclaration declaration : root.getImports())
         {
@@ -367,7 +400,7 @@ public class CompilerPipeline
             Path file = rootPath.toAbsolutePath().getParent()
                     .resolve(declaration.getRelativePath()).normalize();
 
-            if (!seen.add(file))
+            if (!seen.add(declaration.getRelativePath()))
             {
                 continue;
             }
@@ -379,16 +412,30 @@ public class CompilerPipeline
             }
 
             String content;
+            String actualPath;
 
             try
             {
-                content = FileManager.read(file);
+                Path real  = file.toRealPath(LinkOption.NOFOLLOW_LINKS);
+                int  names = Path.of(declaration.getRelativePath()).getNameCount();
+
+                actualPath = real.subpath(real.getNameCount() - names, real.getNameCount()).toString()
+                                 .replace(real.getFileSystem().getSeparator(), "/");
+                content    = FileManager.read(file);
             }
             catch (IOException exception)
             {
                 LOGGER.log(Level.SEVERE, "No se pudo leer el archivo importado " + file, exception);
                 importError(declaration, "No se pudo leer '" + declaration.getRelativePath() + "': "
                         + exception.getMessage(), errorManager);
+                continue;
+            }
+
+            // Windows finds bien.z for Bien.z and sub/ for Sub/; the languages are case sensitive, and Linux would not.
+            if (!actualPath.equals(declaration.getRelativePath()))
+            {
+                importError(declaration, "El archivo importado es '" + actualPath + "', no '"
+                        + declaration.getRelativePath() + "': los nombres distinguen mayusculas.", errorManager);
                 continue;
             }
 

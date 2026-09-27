@@ -630,7 +630,7 @@ public class QuadrupleGenerator implements AstVisitor<String>
             return equality(left, right, DataType.TEXTUM, "==".equals(operator));
         }
 
-        // numerus / numerus trunca: 7 / 2 es 3, aunque en C todo sea float.
+        // numerus / numerus trunca: 7 / 2 es 3, aunque en C todo sea double.
         String op     = switch (operator)
         {
             case "/" -> node.getComputedType() == DataType.NUMERUS ? "div" : operator;
@@ -663,7 +663,8 @@ public class QuadrupleGenerator implements AstVisitor<String>
 
         if (type == DataType.TEXTUM)
         {
-            result = nativeCall("stringEquals", left, right);
+            // Only Zetariano has null: elsewhere an unset text (0) is "".
+            result = nativeCall(language == Language.Z ? "stringEqualsOrNull" : "stringEquals", left, right);
 
             if (equal)
             {
@@ -926,10 +927,9 @@ public class QuadrupleGenerator implements AstVisitor<String>
         String                 owner  = member.getOwner().accept(this);
         String                 type   = member.getOwner().getStructName();
 
-        if (classes.contains(type))
-        {
-            emit("checkNull", owner, "", "");
-        }
+        // An object, or the field a recursive structure left null (Nodo sig): writing through it
+        // would land on heap[campo], inside the string literals.
+        emit("checkNull", owner, "", "");
         return new Location(HEAP, offset(owner, fieldIndex(structs.get(type), member.getMemberName())));
     }
 
@@ -1214,8 +1214,7 @@ public class QuadrupleGenerator implements AstVisitor<String>
     {
         return cNames.computeIfAbsent(function, key ->
         {
-            // Only what C takes in a name: Clase.<atributos> becomes fn_Clase__atributos_.
-            StringBuilder name      = new StringBuilder("fn_" + key.getName().replaceAll("[^A-Za-z0-9_]", "_"));
+            StringBuilder name      = new StringBuilder("fn_" + key.getName());
             String        separator = "__";
 
             for (VariableSymbol parameter : key.getParameters())
@@ -1224,11 +1223,13 @@ public class QuadrupleGenerator implements AstVisitor<String>
                 separator = "_";
             }
 
-            String unique = name.toString();
+            // Only what C takes in a name: Clase.<atributos> becomes fn_Clase__atributos_, a type Año, A_o.
+            String base   = name.toString().replaceAll("[^A-Za-z0-9_]", "_");
+            String unique = base;
 
             for (int n = 2; cNames.containsValue(unique); n++)
             {
-                unique = name + "_" + n;
+                unique = base + "_" + n;
             }
             return unique;
         });
